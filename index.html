@@ -426,7 +426,8 @@ function animateTile(g){if(g.target===null)return;animating=true;
   const start=performance.now(),dur=240;
   function frame(now){const k=Math.min(1,(now-start)/dur);g.anim=1-Math.pow(1-k,3);drawTiles();
     if(k<1)requestAnimationFrame(frame);
-    else{g.rot=g.target;g.target=null;g.anim=0;animating=false;drawTiles();}}
+    else{g.rot=g.target;g.target=null;g.anim=0;animating=false;drawTiles();
+      if(GAME.state==='playing'){GAME.lookahead=runLookahead();applyLookahead();}}}
   requestAnimationFrame(frame);}
 function hitTile(x,y){const n=TL.n;
   if(TILE.n===4){const j=Math.floor((x-TL.x0)/TL.cell),i=Math.floor((y-TL.y0)/TL.cell);
@@ -540,7 +541,8 @@ function findEntryByWorldPos(wx,wy,excludeIdx){
         if(d<bd){bd=d;best={tileIdx:idx,connIdx:ci,side:s};}}}}
   return bd<thr?best:null;}
 
-const GAME={state:'idle',tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,rafId:null};
+const GAME={state:'idle',tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,rafId:null,
+  lookahead:null,stepsToFreeze:Infinity,timerFrozen:false,frozenTime:0};
 const G_BASE=0.55,G_A=0.035;
 function gameSpeed(t){return G_BASE*Math.exp(G_A*t);}
 
@@ -556,21 +558,27 @@ function setGameState(s){
   document.getElementById('shuffle').style.display=idle?'':'none';
   document.getElementById('pausebtn').style.display=idle?'none':'';
   document.getElementById('pausemenu').style.display=s==='paused'?'flex':'none';
-  if(!idle)document.getElementById('gametimer').textContent=formatTimer(GAME.elapsed);}
+  if(!idle){
+    const el=document.getElementById('gametimer');
+    el.textContent=formatTimer(GAME.timerFrozen?GAME.frozenTime:GAME.elapsed);
+    el.style.opacity=GAME.timerFrozen?'0.4':'1';}}
 
 function startGame(){
   if(!TILE||!TILE.conns.length)return;
   GAME.tileIdx=Math.floor(Math.random()*grid.length);
   GAME.connIdx=Math.floor(Math.random()*TILE.conns.length);
   GAME.u=0.5;GAME.dir=1;GAME.elapsed=0;GAME.lastTime=performance.now();
+  GAME.timerFrozen=false;GAME.frozenTime=0;GAME.stepsToFreeze=Infinity;
+  document.getElementById('gametimer').style.opacity='1';
+  GAME.lookahead=runLookahead();applyLookahead();
   setGameState('playing');
-  // intercept browser back to end game without score
   history.pushState({game:true},'');
   GAME.rafId=requestAnimationFrame(gameLoop);}
 
 function stopGame(){
   if(GAME.state==='idle')return;
   if(GAME.rafId){cancelAnimationFrame(GAME.rafId);GAME.rafId=null;}
+  GAME.lookahead=null;GAME.stepsToFreeze=Infinity;GAME.timerFrozen=false;GAME.frozenTime=0;
   setGameState('idle');
   drawTiles();}
 
@@ -589,7 +597,8 @@ function gameLoop(now){
   if(GAME.state!=='playing')return;
   const dt=Math.min((now-GAME.lastTime)/1000,0.1);
   GAME.lastTime=now;GAME.elapsed+=dt;
-  document.getElementById('gametimer').textContent=formatTimer(GAME.elapsed);
+  if(!GAME.timerFrozen)
+    document.getElementById('gametimer').textContent=formatTimer(GAME.elapsed);
   GAME.u+=gameSpeed(GAME.elapsed)*dt*GAME.dir;
 
   let safety=0;
@@ -605,7 +614,14 @@ function gameLoop(now){
     if(grid[res.tileIdx].target!==null){GAME.u=exitSide==='b'?1:0;stopGame();return;}
     GAME.tileIdx=res.tileIdx;GAME.connIdx=res.connIdx;
     if(res.side==='a'){GAME.u=Math.min(over,0.99);GAME.dir=1;}
-    else{GAME.u=Math.max(1-over,0.01);GAME.dir=-1;}}
+    else{GAME.u=Math.max(1-over,0.01);GAME.dir=-1;}
+    // 先読み: ループ一周カウント
+    if(GAME.lookahead&&GAME.lookahead.type==='loop'&&!GAME.timerFrozen){
+      GAME.stepsToFreeze--;
+      if(GAME.stepsToFreeze<=0){
+        GAME.timerFrozen=true;GAME.frozenTime=GAME.elapsed;
+        const el=document.getElementById('gametimer');
+        el.textContent=formatTimer(GAME.frozenTime);el.style.opacity='0.4';}}}
 
   drawTiles(); // drawTiles末尾でdrawGameObjectも呼ばれる
   GAME.rafId=requestAnimationFrame(gameLoop);}
@@ -625,6 +641,31 @@ function drawGameObject(){
   tx.fillStyle='rgba(255,255,255,0.95)';
   tx.shadowColor='rgba(255,200,60,0.85)';tx.shadowBlur=sz*2.2;
   tx.fill();tx.restore();}
+
+// 先読みアルゴリズム: 現在位置から前方を辿りループ or デッドエンドを確定する。
+// ノード = (tileIdx, connIdx, dir)。同ノードの再訪問 → ループ。
+// グリッド外 or 接続なし → デッドエンド。
+// タイル回転は無視（状態は変動するため）。
+function runLookahead(){
+  if(!TILE||!TILE.conns.length)return{type:'open'};
+  const seen=new Map();
+  let ti=GAME.tileIdx,ci=GAME.connIdx,d=GAME.dir;
+  for(let step=0;step<512;step++){
+    const k=`${ti},${ci},${d>0?1:0}`;
+    if(seen.has(k))return{type:'loop',stepsToFreeze:step};
+    seen.set(k,step);
+    const side=d===1?'b':'a';
+    const wp=getEndpointWorld(ti,ci,side);
+    if(!wp)return{type:'deadend'};
+    const res=findEntryByWorldPos(wp.x,wp.y,ti);
+    if(!res)return{type:'deadend'};
+    ti=res.tileIdx;ci=res.connIdx;d=res.side==='a'?1:-1;}
+  return{type:'loop',stepsToFreeze:512};}
+
+// 先読み結果をGAMEに適用（タイマーフリーズ済みなら何もしない）
+function applyLookahead(){
+  if(GAME.timerFrozen)return;
+  GAME.stepsToFreeze=GAME.lookahead.type==='loop'?GAME.lookahead.stepsToFreeze:Infinity;}
 
 // ボタンハンドラ
 document.getElementById('startgame').addEventListener('click',startGame);
