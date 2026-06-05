@@ -405,10 +405,58 @@ function drawTilePoly(ctx,cx,cy,R,rotAngle,triDir){
     }
     ctx.lineCap='butt';ctx.strokeStyle='rgba(0,0,0,.4)';ctx.lineWidth=w+5; path(); ctx.stroke();
     ctx.strokeStyle=TILE.road;ctx.lineWidth=w; path(); ctx.stroke();});
+  // 交差ギャップ: conn[i]（下）にギャップを開け、conn[j]（上）を再描画
+  if(TILE.conns.length>1){
+    const mkPath=(ctx,c,R,verts)=>{
+      const ap=edgePt(verts,c.a.edge,c.a.t),bp=edgePt(verts,c.b.edge,c.b.t);
+      const Ax=ap.x*R,Ay=ap.y*R,Bx=bp.x*R,By=bp.y*R;
+      const nA=edgeNormal(verts,c.a.edge),nB=edgeNormal(verts,c.b.edge);
+      const L=Math.max(Math.hypot(Ax-Bx,Ay-By)*0.38,R*0.12);
+      ctx.beginPath();ctx.moveTo(Ax,Ay);
+      if(c.warp){const Mx=(Ax+Bx)/2+c.warp.ux*R,My=(Ay+By)/2+c.warp.uy*R;
+        ctx.bezierCurveTo(Ax+nA.x*L*0.7,Ay+nA.y*L*0.7,Mx-(Bx-Ax)*0.18,My-(By-Ay)*0.18,Mx,My);
+        ctx.bezierCurveTo(Mx+(Bx-Ax)*0.18,My+(By-Ay)*0.18,Bx+nB.x*L*0.7,By+nB.y*L*0.7,Bx,By);}
+      else ctx.bezierCurveTo(Ax+nA.x*L,Ay+nA.y*L,Bx+nB.x*L,By+nB.y*L,Bx,By);};
+    for(let i=0;i<TILE.conns.length-1;i++){
+      for(let j=i+1;j<TILE.conns.length;j++){
+        const xs=findBezierCrossings(TILE.conns[i],TILE.conns[j]);
+        if(!xs.length)continue;
+        xs.forEach(({uA})=>{
+          const pt=evalTileConn(TILE.conns[i],Math.max(0.001,Math.min(0.999,uA)));
+          const gx=pt.x*R,gy=pt.y*R;
+          const tlen=Math.hypot(pt.dx,pt.dy)||1;
+          const half=w*1.1;
+          ctx.beginPath();
+          ctx.moveTo(gx-pt.dx/tlen*half,gy-pt.dy/tlen*half);
+          ctx.lineTo(gx+pt.dx/tlen*half,gy+pt.dy/tlen*half);
+          ctx.strokeStyle=TILE.bg;ctx.lineWidth=w+6;ctx.lineCap='round';ctx.stroke();});
+        // 上側のconnを再描画
+        mkPath(ctx,TILE.conns[j],R,verts);
+        ctx.strokeStyle='rgba(0,0,0,.4)';ctx.lineWidth=w+5;ctx.lineCap='butt';ctx.stroke();
+        mkPath(ctx,TILE.conns[j],R,verts);
+        ctx.strokeStyle=TILE.road;ctx.lineWidth=w;ctx.stroke();}}}
   ctx.restore();
   ctx.strokeStyle='rgba(255,255,255,.05)';ctx.lineWidth=1;
   ctx.beginPath();verts.forEach((v,i)=>{const x=v.x*R,y=v.y*R;i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.closePath();ctx.stroke();
   ctx.restore();}
+// 2Dラインセグメント交差判定。交差する場合 {t,s}（各セグメント内パラメータ）を返す。
+function segX(ax,ay,bx,by,cx,cy,dx,dy){
+  const den=(bx-ax)*(dy-cy)-(by-ay)*(dx-cx);
+  if(Math.abs(den)<1e-10)return null;
+  const t=((cx-ax)*(dy-cy)-(cy-ay)*(dx-cx))/den;
+  const s=((cx-ax)*(by-ay)-(cy-ay)*(bx-ax))/den;
+  return(t>=0&&t<=1&&s>=0&&s<=1)?{t,s}:null;}
+
+// 2つのベジェ曲線の交差パラメータを返す（正規化座標）
+function findBezierCrossings(cA,cB){
+  const N=24;
+  const sample=c=>{const a=[];for(let i=0;i<=N;i++){const u=i===0?.001:i===N?.999:i/N;const p=evalTileConn(c,u);a.push({x:p.x,y:p.y,dx:p.dx,dy:p.dy,u});}return a;};
+  const pA=sample(cA),pB=sample(cB);const res=[];
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){
+    const r=segX(pA[i].x,pA[i].y,pA[i+1].x,pA[i+1].y,pB[j].x,pB[j].y,pB[j+1].x,pB[j+1].y);
+    if(r)res.push({uA:pA[i].u+r.t*(pA[i+1].u-pA[i].u),uB:pB[j].u+r.s*(pB[j+1].u-pB[j].u)});}
+  return res;}
+
 function stepAngle(){return TILE.n===4?Math.PI/2:TILE.n===6?Math.PI/3:2*Math.PI/3;}
 function cellAngle(g){const base=g.rot*stepAngle();
   if(g.target!==null){return base+stepAngle()*g.anim;}return base;}
