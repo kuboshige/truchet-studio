@@ -338,10 +338,19 @@ document.addEventListener('click',e=>{if(!pop.contains(e.target)&&!e.target.clas
 function syncSwatches(){document.getElementById('sw-road').style.background=COLOR.road;
   document.getElementById('sw-bg').style.background=COLOR.bg;}
 let TILE=null;
+function bezierArcLen(conn){
+  const N=32;let len=0;
+  let prev=evalTileConn(conn,0.001);
+  for(let i=1;i<=N;i++){
+    const pt=evalTileConn(conn,0.001+0.998*i/N);
+    len+=Math.hypot(pt.x-prev.x,pt.y-prev.y);prev=pt;}
+  return len;}
+
 function buildSnapshot(){if(GAME&&GAME.state!=='idle')stopGame();TILE={n:S.n,width:(+document.getElementById('width').value)/(DV.R),road:COLOR.road,bg:COLOR.bg,
   conns:S.conns.map(c=>{const a=find(c[0]),b=find(c[1]);
     const w=c[2]?{ux:c[2].ux/DV.R, uy:c[2].uy/DV.R}:null;
     return{a:{edge:a.edge,t:a.t},b:{edge:b.edge,t:b.t},warp:w};})};
+  TILE.conns.forEach(c=>{c.len=bezierArcLen(c);});
   document.getElementById('startgame').style.display='';}
 const tc=document.getElementById('tcanvas'),tx=tc.getContext('2d');
 let grid=[];let animating=false;let TL={};
@@ -509,12 +518,12 @@ function getTileInfoAny(idx){
   return{cx,cy,R,angle,triDir};}
 
 // Local normalized coords → world canvas coords, handling triDir flip.
-// For down triangles, drawTilePoly applies scale(1,-1) before rotate, so
-// the local y-axis is negated before the rotation transform.
+// drawTilePoly applies scale(1,-1) THEN rotate for down triangles, so:
+//   x_world = cx + R*(lx*cos - ly*sin)          (same for both triDir)
+//   y_world = cy + triDir * R*(lx*sin + ly*cos)  (negated for down)
 function localToWorldAny(lx,ly,ti){
-  const fly=ti.triDir*ly; // flip y for down triangles
   const cos=Math.cos(ti.angle),sin=Math.sin(ti.angle);
-  return{x:ti.cx+ti.R*(lx*cos-fly*sin),y:ti.cy+ti.R*(lx*sin+fly*cos)};}
+  return{x:ti.cx+ti.R*(lx*cos-ly*sin),y:ti.cy+ti.triDir*ti.R*(lx*sin+ly*cos)};}
 
 // Circumradius of the current tile type (for distance thresholds)
 function tileR(){return TILE.n===4?TL.cell/Math.SQRT2:TL.R||0;}
@@ -543,7 +552,7 @@ function findEntryByWorldPos(wx,wy,excludeIdx){
 
 const GAME={state:'idle',tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,rafId:null,
   lookahead:null,stepsToFreeze:Infinity,timerFrozen:false,frozenTime:0};
-const G_BASE=0.055,G_A=0.0035;
+const G_BASE=0.55,G_A=0.0035;
 function gameSpeed(t){return G_BASE*Math.exp(G_A*t);}
 
 function formatTimer(e){
@@ -599,7 +608,8 @@ function gameLoop(now){
   GAME.lastTime=now;GAME.elapsed+=dt;
   if(!GAME.timerFrozen)
     document.getElementById('gametimer').textContent=formatTimer(GAME.elapsed);
-  GAME.u+=gameSpeed(GAME.elapsed)*dt*GAME.dir;
+  const _conn=TILE.conns[GAME.connIdx];
+  GAME.u+=gameSpeed(GAME.elapsed)*dt*GAME.dir/(_conn&&_conn.len||1);
 
   let safety=0;
   while(safety++<8){
@@ -627,28 +637,33 @@ function gameLoop(now){
   GAME.rafId=requestAnimationFrame(gameLoop);}
 
 function drawHighlight(){
-  if(!TILE||!TILE.conns[GAME.connIdx])return;
-  const ti=getTileInfoAny(GAME.tileIdx);if(!ti)return;
-  const conn=TILE.conns[GAME.connIdx];
-  const spd=gameSpeed(GAME.elapsed);
-  const hlen=Math.max(0.04,0.32-spd*0.5);
-  const alpha=Math.max(0,0.5-spd*0.25);
-  if(alpha<=0)return;
-  const u0=GAME.u;
-  const u1=GAME.dir===1?Math.min(u0+hlen,0.999):Math.max(u0-hlen,0.001);
-  const N=14;
+  if(!TILE||!GAME.lookahead)return;
+  const path=GAME.lookahead.path;if(!path||!path.length)return;
+  // Collect world-space points 10 cells ahead
+  const MAX_CELLS=10,SAMP=16;
   const pts=[];
-  for(let i=0;i<=N;i++){
-    const u=u0+(u1-u0)*i/N;
-    const pt=evalTileConn(conn,Math.max(0.001,Math.min(0.999,u)));
-    pts.push(localToWorldAny(pt.x,pt.y,ti));}
-  const w=TILE.width*ti.R;
+  for(let cellI=0;cellI<MAX_CELLS&&cellI<path.length;cellI++){
+    const node=path[cellI];
+    const ti=getTileInfoAny(node.ti);if(!ti)break;
+    const conn=TILE.conns[node.ci];if(!conn)break;
+    const uS=cellI===0?GAME.u:(node.d===1?0.001:0.999);
+    const uE=node.d===1?0.999:0.001;
+    const steps=cellI===0?SAMP:SAMP;
+    for(let i=0;i<=steps;i++){
+      const u=uS+(uE-uS)*i/steps;
+      const pt=evalTileConn(conn,Math.max(0.001,Math.min(0.999,u)));
+      pts.push({...localToWorldAny(pt.x,pt.y,ti),cell:cellI});}}
+  if(pts.length<2)return;
+  const ti0=getTileInfoAny(path[0].ti);if(!ti0)return;
+  const w=TILE.width*ti0.R;
+  const total=pts.length-1;
   tx.save();tx.lineCap='round';tx.lineJoin='round';
-  for(let i=0;i<N;i++){
-    const frac=i/N;
+  for(let i=0;i<total;i++){
+    const frac=i/total;
+    const alpha=0.55*(1-frac*frac);
     tx.beginPath();tx.moveTo(pts[i].x,pts[i].y);tx.lineTo(pts[i+1].x,pts[i+1].y);
-    tx.strokeStyle=`rgba(255,180,180,${alpha*(1-frac)})`;
-    tx.lineWidth=w*(1-frac*0.6);
+    tx.strokeStyle=`rgba(255,160,160,${alpha})`;
+    tx.lineWidth=w*(1-frac*0.5);
     tx.stroke();}
   tx.restore();}
 
@@ -657,9 +672,8 @@ function drawGameObject(){
   const conn=TILE.conns[GAME.connIdx];if(!conn)return;
   const pt=evalTileConn(conn,Math.max(0.001,Math.min(0.999,GAME.u)));
   const wp=localToWorldAny(pt.x,pt.y,ti);
-  const ldx=pt.dx,ldy=ti.triDir*pt.dy;
   const cos=Math.cos(ti.angle),sin=Math.sin(ti.angle);
-  const tdx=(ldx*cos-ldy*sin)*GAME.dir,tdy=(ldx*sin+ldy*cos)*GAME.dir;
+  const tdx=(pt.dx*cos-pt.dy*sin)*GAME.dir,tdy=ti.triDir*(pt.dx*sin+pt.dy*cos)*GAME.dir;
   const sz=TILE.width*ti.R*2.0;
   drawHighlight();
   tx.save();
@@ -674,20 +688,21 @@ function drawGameObject(){
 // グリッド外 or 接続なし → デッドエンド。
 // タイル回転は無視（状態は変動するため）。
 function runLookahead(){
-  if(!TILE||!TILE.conns.length)return{type:'open'};
-  const seen=new Map();
+  if(!TILE||!TILE.conns.length)return{type:'open',path:[]};
+  const seen=new Map(),path=[];
   let ti=GAME.tileIdx,ci=GAME.connIdx,d=GAME.dir;
   for(let step=0;step<512;step++){
     const k=`${ti},${ci},${d>0?1:0}`;
-    if(seen.has(k))return{type:'loop',stepsToFreeze:step};
+    if(seen.has(k))return{type:'loop',stepsToFreeze:step,path};
     seen.set(k,step);
+    path.push({ti,ci,d});
     const side=d===1?'b':'a';
     const wp=getEndpointWorld(ti,ci,side);
-    if(!wp)return{type:'deadend'};
+    if(!wp)return{type:'deadend',path};
     const res=findEntryByWorldPos(wp.x,wp.y,ti);
-    if(!res)return{type:'deadend'};
+    if(!res)return{type:'deadend',path};
     ti=res.tileIdx;ci=res.connIdx;d=res.side==='a'?1:-1;}
-  return{type:'loop',stepsToFreeze:512};}
+  return{type:'loop',stepsToFreeze:512,path};}
 
 // 先読み結果をGAMEに適用。ループ解消時はタイマーを再開する。
 function applyLookahead(){
