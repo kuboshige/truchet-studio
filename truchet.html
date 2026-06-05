@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Truchet Tile Studio</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&family=Major+Mono+Display&display=swap');
+  :root{
+    --bg:#14121a; --panel:#1f1c28; --ink:#ede8f5; --line:#b9a8ff;
+    --accent:#ff5c8a; --gold:#ffce5c; --grid:#3a3450;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:'Zen Maru Gothic',sans-serif;overflow:hidden;overscroll-behavior:none;
+    background-image:radial-gradient(circle at 20% 10%,#2a2440 0,transparent 55%),
+                     radial-gradient(circle at 80% 90%,#271d33 0,transparent 50%);}
+  #app{display:flex;flex-direction:column;height:100%;}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--grid);flex-wrap:wrap;}
+  header h1{font-family:'Major Mono Display',monospace;font-size:14px;letter-spacing:1px;margin:0;color:var(--line);font-weight:400;}
+  .tabs{margin-left:auto;display:flex;gap:6px;}
+  .tab{border:1px solid var(--grid);background:transparent;color:var(--ink);padding:6px 14px;
+    border-radius:20px;font-family:inherit;font-size:13px;cursor:pointer;transition:all .2s;font-weight:700;}
+  .tab.active{background:var(--line);color:#14121a;border-color:var(--line);}
+  main{flex:1;position:relative;overflow:hidden;}
+  .screen{position:absolute;inset:0;display:none;flex-direction:column;}
+  .screen.active{display:flex;}
+  .stage{flex:1;display:flex;align-items:center;justify-content:center;touch-action:none;}
+  canvas{display:block;touch-action:none;}
+  .toolbar{display:flex;align-items:center;gap:14px;padding:12px 18px;background:var(--panel);
+    border-top:1px solid var(--grid);flex-wrap:wrap;}
+  .toolbar label{font-size:12px;opacity:.85;display:flex;align-items:center;gap:7px;}
+  input[type=range]{accent-color:var(--accent);width:100px;}
+  select{background:#2a2640;color:var(--ink);border:1px solid var(--grid);border-radius:8px;
+    padding:6px 8px;font-family:inherit;font-size:13px;}
+  .btn{border:none;border-radius:10px;padding:9px 15px;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;transition:transform .1s;}
+  .btn:active{transform:scale(.94);}
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-ghost{background:var(--grid);color:var(--ink);}
+  .badge{font-size:11px;padding:3px 9px;border-radius:20px;font-weight:700;}
+  .badge.ok{background:#2c6e49;color:#d7ffe8;} .badge.warn{background:#7a3a3a;color:#ffd7d7;}
+  .swatch{width:26px;height:26px;border-radius:50%;border:2px solid #fff3;cursor:pointer;flex-shrink:0;}
+  .hint{font-size:11.5px;opacity:.6;flex-basis:100%;line-height:1.5;}
+  .pop{position:fixed;background:var(--panel);border:1px solid var(--grid);border-radius:12px;
+    padding:10px;display:none;grid-template-columns:repeat(6,26px);gap:8px;z-index:200;box-shadow:0 8px 30px #000a;}
+  .pop.open{display:grid;}
+  .pop .chip{width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent;}
+  .pop .chip:hover{border-color:#fff;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>truchet studio</h1>
+    <div class="tabs">
+      <button class="tab active" data-screen="design">デザイン</button>
+      <button class="tab" data-screen="tile">敷き詰め</button>
+    </div>
+  </header>
+  <main>
+    <section class="screen active" id="design">
+      <div class="stage"><canvas id="dcanvas"></canvas></div>
+      <div class="toolbar">
+        <label>形 <select id="shape">
+          <option value="3">正三角形</option>
+          <option value="4" selected>正方形</option>
+          <option value="6">正六角形</option>
+        </select></label>
+        <label>道幅 <input type="range" id="width" min="4" max="42" value="16"></label>
+        <label>道 <span class="swatch" id="sw-road"></span></label>
+        <label>地 <span class="swatch" id="sw-bg"></span></label>
+        <span class="badge warn" id="status">辺をタップ</span>
+        <button class="btn btn-ghost" id="undo">戻す</button>
+        <button class="btn btn-ghost" id="clear">クリア</button>
+        <button class="btn btn-primary" id="done">完成</button>
+        <span class="hint">辺をタップ→対称ペア生成 ／ 黄点どうしをドラッグでベジェ接続（近づくと吸着）／ 点を長押しでスライド（対称連動・道も追従）／ 道をドラッグで曲げる</span>
+      </div>
+    </section>
+    <section class="screen" id="tile">
+      <div class="stage"><canvas id="tcanvas"></canvas></div>
+      <div class="toolbar">
+        <label>枚数 <input type="range" id="gridn" min="2" max="8" value="4"></label>
+        <button class="btn btn-ghost" id="shuffle">シャッフル</button>
+        <span class="hint">タイルをタップで回転（四角90°/三角120°/六角60°）＋アニメ ／ どの向きでも道はつながる</span>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="pop" id="pop"></div>
+<script>
+const PALETTE=['#cdbcff','#ff5c8a','#ffce5c','#5cffd0','#5ca8ff','#ff8a5c',
+               '#ffffff','#b0b0c0','#7a6cff','#46c46b','#e74c3c','#14121a',
+               '#2a2436','#1a1726','#3a2f55','#0e0c14','#f5e6c8','#2b3a2b'];
+let COLOR={road:'#7a5cff', bg:'#e8e4f0'};
+function polyVerts(n){const v=[];const off=(n===4)?Math.PI/4:(n===3?-Math.PI/2:Math.PI/6);
+  for(let i=0;i<n;i++){const a=off+i*2*Math.PI/n;v.push({x:Math.cos(a),y:Math.sin(a)});}return v;}
+function edgePt(verts,edge,t){const a=verts[edge],b=verts[(edge+1)%verts.length];
+  return{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t};}
+function edgeNormal(verts,edge){const a=verts[edge],b=verts[(edge+1)%verts.length];
+  const dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy);let nx=-dy/len,ny=dx/len;
+  const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;if(nx*mx+ny*my>0){nx=-nx;ny=-ny;}return{x:nx,y:ny};}
+const S={n:4,points:[],conns:[],nextId:1};
+let history=[];
+function snap(){history.push(JSON.stringify({points:S.points,conns:S.conns,nextId:S.nextId}));if(history.length>60)history.shift();}
+function undo(){if(!history.length)return;const s=JSON.parse(history.pop());
+  S.points=s.points;S.conns=s.conns;S.nextId=s.nextId;drawDesign();}
+const SNAPPX=26;
+const round=v=>Math.round(v*1000)/1000;
+const find=id=>S.points.find(p=>p.id===id);
+const directlyConnected=id=>S.conns.some(c=>c[0]===id||c[1]===id);
+// A point counts as connected if itself OR any point overlapping it (same edge,
+// same position) has a road. Overlapping points share one physical junction, so
+// one road there satisfies the whole stack — and symmetry guarantees tileability.
+function connected(id){const p=find(id);if(!p)return false;
+  if(directlyConnected(id))return true;
+  return S.points.some(q=>q.id!==id&&q.edge===p.edge&&Math.abs(round(q.t)-round(p.t))<0.02&&directlyConnected(q.id));}
+let nextGrp=1;
+function addPair(edge,t){const cand=[0.5,1/3,2/3,0.25,0.75];
+  for(const c of cand){if(Math.abs(t-c)<0.05){t=c;break;}}
+  snap();
+  t=round(t);const partnerT=round(1-t);
+  // create a mirror pair on EVERY edge, all tagged with one group id (grp).
+  // grp ties together the points that must move as one symmetric unit, so a
+  // drag is robust even when points overlap at the midpoint.
+  const grp=nextGrp++;
+  for(let e=0;e<S.n;e++){
+    const a={id:S.nextId++,edge:e,t:t,grp,side:0};
+    const b={id:S.nextId++,edge:e,t:partnerT,grp,side:1,pair:a.id};
+    a.pair=b.id;
+    S.points.push(a,b);
+  }}
+function ensureTValueAllEdges(tv){ // seed helper
+  tv=round(tv);const grp=nextGrp++;
+  for(let e=0;e<S.n;e++){
+    const a={id:S.nextId++,edge:e,t:tv,grp,side:0};
+    const b={id:S.nextId++,edge:e,t:round(1-tv),grp,side:1,pair:a.id};
+    a.pair=b.id; S.points.push(a,b);
+  }}
+// Lock the move-group at drag start: ALL points sharing the grabbed point's grp.
+// side 0 points go to nt, side 1 (mirror) go to 1-nt. Membership is fixed by grp,
+// so overlapping at the midpoint never reshuffles it.
+function buildMoveGroup(id){
+  const p=find(id);if(!p||p.grp==null)return null;
+  const members=S.points.filter(q=>q.grp===p.grp).map(q=>({id:q.id,side:q.side}));
+  return {members, grabSide:p.side};
+}
+function moveGroup(group,nt){
+  nt=Math.max(0.04,Math.min(0.96,nt));
+  if(Math.abs(nt-0.5)<0.03)nt=0.5;
+  else{for(const c of [1/3,2/3,0.25,0.75])if(Math.abs(nt-c)<0.03){nt=c;break;}}
+  nt=round(nt);const np=round(1-nt);
+  group.members.forEach(m=>{const q=find(m.id);if(q)q.t=(m.side===0)?nt:np;});
+}
+// Called once on pointer-up. If two points on the same edge ended up essentially
+// coincident, merge them into one — but KEEP every connection both had, so a
+// On pointer-up we DON'T merge/delete points. Two points sharing the midpoint
+// simply overlap; both are kept so symmetry (and thus tileability) is preserved
+// and they can always be slid back apart. This function is now a no-op kept for
+// call-site compatibility.
+function mergeCoincident(){ return false; }
+const dc=document.getElementById('dcanvas'),dx=dc.getContext('2d');
+let DV={cx:0,cy:0,R:0,verts:[]};
+function fitDesign(){const st=dc.parentElement.getBoundingClientRect();
+  dc.width=st.width;dc.height=st.height;
+  DV.R=Math.min(st.width,st.height)/2-46;DV.cx=st.width/2;DV.cy=st.height/2;
+  DV.verts=polyVerts(S.n);drawDesign();}
+function M2S(p){return{x:DV.cx+p.x*DV.R,y:DV.cy+p.y*DV.R};}
+function screenEdgePt(edge,t){return M2S(edgePt(DV.verts,edge,t));}
+function ctrlLenFor(A,B){const d=Math.hypot(A.x-B.x,A.y-B.y);return Math.max(d*0.38,DV.R*0.12);}
+function getCSS(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+function clipPath(ctx){ctx.beginPath();
+  DV.verts.forEach((v,i)=>{const s=M2S(v);i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y);});
+  ctx.closePath();ctx.clip();}
+// Build the path of a road. If conn has warp {ux,uy} (a screen-space offset of
+// the midpoint), the curve bends through the dragged midpoint while keeping both
+// ends perpendicular to their edges. Returns a function that strokes the path.
+function roadPath(ctx,a,b,warp){
+  const A=screenEdgePt(a.edge,a.t),B=screenEdgePt(b.edge,b.t);
+  const nA=edgeNormal(DV.verts,a.edge),nB=edgeNormal(DV.verts,b.edge);
+  const L=ctrlLenFor(A,B);
+  ctx.beginPath();ctx.moveTo(A.x,A.y);
+  if(warp){
+    // midpoint of straight chord, displaced by warp
+    const M={x:(A.x+B.x)/2+warp.ux, y:(A.y+B.y)/2+warp.uy};
+    // first half: A (perp out) -> M, second half: M -> B (perp out)
+    const c1={x:A.x+nA.x*L*0.7,y:A.y+nA.y*L*0.7};
+    const c2={x:M.x-(B.x-A.x)*0.18,y:M.y-(B.y-A.y)*0.18};
+    ctx.bezierCurveTo(c1.x,c1.y,c2.x,c2.y,M.x,M.y);
+    const c3={x:M.x+(B.x-A.x)*0.18,y:M.y+(B.y-A.y)*0.18};
+    const c4={x:B.x+nB.x*L*0.7,y:B.y+nB.y*L*0.7};
+    ctx.bezierCurveTo(c3.x,c3.y,c4.x,c4.y,B.x,B.y);
+  } else {
+    const c1={x:A.x+nA.x*L,y:A.y+nA.y*L},c2={x:B.x+nB.x*L,y:B.y+nB.y*L};
+    ctx.bezierCurveTo(c1.x,c1.y,c2.x,c2.y,B.x,B.y);
+  }
+}
+function roadBezier(ctx,a,b,w,col,warp){
+  ctx.lineCap='butt';
+  ctx.strokeStyle='rgba(0,0,0,.35)';ctx.lineWidth=w+6; roadPath(ctx,a,b,warp); ctx.stroke();
+  ctx.strokeStyle=col;ctx.lineWidth=w; roadPath(ctx,a,b,warp); ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,.22)';ctx.lineWidth=Math.max(1,w*0.08); roadPath(ctx,a,b,warp); ctx.stroke();
+}
+// midpoint of a road's current curve in screen space (for hit-testing road drags)
+function roadMid(a,b,warp){
+  const A=screenEdgePt(a.edge,a.t),B=screenEdgePt(b.edge,b.t);
+  return {x:(A.x+B.x)/2+(warp?warp.ux:0), y:(A.y+B.y)/2+(warp?warp.uy:0)};
+}
+function drawDesign(){
+  dx.clearRect(0,0,dc.width,dc.height);
+  dx.save();dx.beginPath();
+  DV.verts.forEach((v,i)=>{const s=M2S(v);i?dx.lineTo(s.x,s.y):dx.moveTo(s.x,s.y);});
+  dx.closePath();dx.fillStyle=COLOR.bg;dx.fill();dx.restore();
+  dx.save();dx.beginPath();
+  DV.verts.forEach((v,i)=>{const s=M2S(v);i?dx.lineTo(s.x,s.y):dx.moveTo(s.x,s.y);});
+  dx.closePath();dx.strokeStyle=getCSS('--grid');dx.lineWidth=2;dx.stroke();dx.restore();
+  const w=+document.getElementById('width').value;
+  dx.save();clipPath(dx);
+  S.conns.forEach(c=>roadBezier(dx,find(c[0]),find(c[1]),w,COLOR.road,c[2]));
+  if(drag.active&&drag.from!==null&&drag.mode==='connect'){
+    const from=find(drag.from);const A=screenEdgePt(from.edge,from.t);
+    let B,c2;const nA=edgeNormal(DV.verts,from.edge);
+    if(drag.snapTo!==null){const sp=find(drag.snapTo);B=screenEdgePt(sp.edge,sp.t);
+      const nB=edgeNormal(DV.verts,sp.edge);const L=ctrlLenFor(A,B);c2={x:B.x+nB.x*L,y:B.y+nB.y*L};}
+    else{B={x:drag.mx,y:drag.my};c2=B;}
+    const L=ctrlLenFor(A,B);const c1={x:A.x+nA.x*L,y:A.y+nA.y*L};
+    dx.setLineDash(drag.snapTo!==null?[]:[8,8]);dx.lineCap='round';
+    dx.strokeStyle=drag.snapTo!==null?getCSS('--accent'):'rgba(205,188,255,.6)';
+    dx.lineWidth=drag.snapTo!==null?w:4;
+    dx.beginPath();dx.moveTo(A.x,A.y);dx.bezierCurveTo(c1.x,c1.y,c2.x,c2.y,B.x,B.y);dx.stroke();
+    dx.setLineDash([]);}
+  dx.restore();
+  S.points.forEach(p=>{const s=screenEdgePt(p.edge,p.t);const conn=connected(p.id);
+    let col=conn?getCSS('--line'):getCSS('--gold');
+    const active=(drag.from===p.id&&(drag.mode==='slide'||drag.mode==='connect'||drag.mode==='pending'));
+    if(active)col=getCSS('--accent');
+    const rad=(drag.from===p.id&&drag.mode==='slide')?11:(active?9:7);
+    dx.beginPath();dx.arc(s.x,s.y,rad,0,7);dx.fillStyle=col;dx.fill();
+    if(drag.from===p.id&&drag.mode==='slide'){dx.strokeStyle='#fff';dx.lineWidth=3;dx.stroke();}
+    else if(!conn){dx.strokeStyle=getCSS('--accent');dx.lineWidth=2;dx.stroke();}});
+  updateStatus();}
+function updateStatus(){const open=S.points.filter(p=>!connected(p.id)).length;
+  const el=document.getElementById('status');
+  if(!S.points.length){el.textContent='辺をタップ';el.className='badge warn';return;}
+  if(open===0){el.textContent='接続完了 ✓';el.className='badge ok';}
+  else{el.textContent='未接続: '+open;el.className='badge warn';}}
+const drag={active:false,from:null,mx:0,my:0,snapTo:null,moved:false,mode:null,startEdge:null,previewT:0,_snapped:false};
+function getXY(e){const r=dc.getBoundingClientRect();const t=e.touches?e.touches[0]:e;return{x:t.clientX-r.left,y:t.clientY-r.top};}
+function nearestPoint(x,y,exclude){let best=null,bd=SNAPPX;
+  S.points.forEach(p=>{if(p.id===exclude)return;const s=screenEdgePt(p.edge,p.t);
+    const d=Math.hypot(s.x-x,s.y-y);if(d<bd){bd=d;best=p.id;}});return best;}
+function projectEdge(x,y){let best=null,bd=1e9;
+  for(let e=0;e<S.n;e++){const a=M2S(DV.verts[e]),b=M2S(DV.verts[(e+1)%S.n]);
+    const dx_=b.x-a.x,dy_=b.y-a.y,L2=dx_*dx_+dy_*dy_;
+    let t=((x-a.x)*dx_+(y-a.y)*dy_)/L2;t=Math.max(0,Math.min(1,t));
+    const px=a.x+dx_*t,py=a.y+dy_*t,d=Math.hypot(px-x,py-y);
+    if(d<bd){bd=d;best={edge:e,t,dist:d};}}return best;}
+// find a connection whose current midpoint is near (x,y); returns index or -1
+function nearestRoad(x,y){let best=-1,bd=24;
+  S.conns.forEach((c,i)=>{const m=roadMid(find(c[0]),find(c[1]),c[2]);
+    const d=Math.hypot(m.x-x,m.y-y);if(d<bd){bd=d;best=i;}});return best;}
+const LONGPRESS=380;
+function onDown(e){e.preventDefault();const{x,y}=getXY(e);
+  drag.mx=x;drag.my=y;drag.downX=x;drag.downY=y;drag.moved=false;drag._snapped=false;
+  clearTimeout(drag.lpTimer);
+  const hit=nearestPoint(x,y,null);
+  if(hit!==null){
+    drag.active=true;drag.from=hit;drag.snapTo=null;drag.mode='pending';drag.startEdge=find(hit).edge;
+    // long-press to enter slide mode
+    drag.lpTimer=setTimeout(()=>{ if(drag.active&&!drag.moved){ drag.mode='slide'; snap(); drag._snapped=true;
+      drag.group=buildMoveGroup(drag.from);
+      navigator.vibrate&&navigator.vibrate(15); drawDesign(); } }, LONGPRESS);
+    drawDesign();return;
+  }
+  // not on a point: maybe on a road -> warp drag
+  const ri=nearestRoad(x,y);
+  if(ri>=0){ drag.active=true;drag.mode='warp';drag.roadIdx=ri; snap(); drag._snapped=true; drawDesign(); return; }
+  // empty: add a point on nearest edge
+  const proj=projectEdge(x,y);if(proj&&proj.dist<30){addPair(proj.edge,proj.t);}
+  drawDesign();}
+function onMove(e){if(!drag.active)return;e.preventDefault();const{x,y}=getXY(e);drag.mx=x;drag.my=y;
+  const movedDist=Math.hypot(x-drag.downX,y-drag.downY);
+  if(!drag.moved&&movedDist>6){drag.moved=true;
+    if(drag.mode==='pending'){ clearTimeout(drag.lpTimer); drag.mode='connect'; } }
+  if(drag.mode==='connect'){const near=nearestPoint(x,y,drag.from);
+    drag.snapTo=(near!==null&&!directlyConnected(near))?near:null;}
+  else if(drag.mode==='slide'){const p=find(drag.from);if(p&&drag.group){
+    const a=M2S(DV.verts[p.edge]),b=M2S(DV.verts[(p.edge+1)%S.n]);
+    const dx_=b.x-a.x,dy_=b.y-a.y,L2=dx_*dx_+dy_*dy_;
+    let tt=((x-a.x)*dx_+(y-a.y)*dy_)/L2;
+    // convert grabbed-point param to side-0 param
+    const nt0 = (drag.group.grabSide===0) ? tt : (1-tt);
+    moveGroup(drag.group, nt0);}}
+  else if(drag.mode==='warp'){const c=S.conns[drag.roadIdx];if(c){
+    const A=screenEdgePt(find(c[0]).edge,find(c[0]).t),B=screenEdgePt(find(c[1]).edge,find(c[1]).t);
+    c[2]={ux:x-(A.x+B.x)/2, uy:y-(A.y+B.y)/2};}}
+  drawDesign();}
+function onUp(e){if(!drag.active)return;e.preventDefault();
+  clearTimeout(drag.lpTimer);
+  if(drag.mode==='connect'&&drag.snapTo!==null&&!directlyConnected(drag.from)&&!directlyConnected(drag.snapTo)){
+    if(!drag._snapped)snap();S.conns.push([drag.from,drag.snapTo]);}
+  if(drag.mode==='slide'){ mergeCoincident(); } // merge only after the finger lifts
+  drag.active=false;drag.from=null;drag.snapTo=null;drag.mode=null;drag._snapped=false;drag.roadIdx=-1;drawDesign();}
+dc.addEventListener('mousedown',onDown);dc.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onUp);
+dc.addEventListener('touchstart',onDown,{passive:false});dc.addEventListener('touchmove',onMove,{passive:false});dc.addEventListener('touchend',onUp,{passive:false});
+document.getElementById('width').addEventListener('input',drawDesign);
+document.getElementById('undo').addEventListener('click',undo);
+document.getElementById('clear').addEventListener('click',()=>{snap();S.points=[];S.conns=[];S.nextId=1;drawDesign();});
+document.getElementById('shape').addEventListener('change',e=>{
+  S.n=+e.target.value;S.points=[];S.conns=[];S.nextId=1;history=[];fitDesign();});
+document.getElementById('done').addEventListener('click',()=>{
+  const open=S.points.filter(p=>!connected(p.id)).length;
+  if(open>0||!S.points.length){ripple(getCSS('--accent'));return;}
+  ripple(getCSS('--gold'));buildSnapshot();setTimeout(()=>switchScreen('tile'),450);});
+function ripple(color){const r=document.createElement('div');const rect=dc.getBoundingClientRect();
+  Object.assign(r.style,{position:'fixed',left:(rect.left+rect.width/2)+'px',top:(rect.top+rect.height/2)+'px',
+    width:'10px',height:'10px',borderRadius:'50%',border:'3px solid '+color,transform:'translate(-50%,-50%)',
+    pointerEvents:'none',opacity:'.9',zIndex:99});document.body.appendChild(r);
+  r.animate([{width:'10px',height:'10px',opacity:.9},{width:'440px',height:'440px',opacity:0}],
+    {duration:600,easing:'cubic-bezier(.2,.7,.3,1)'}).onfinish=()=>r.remove();}
+const pop=document.getElementById('pop');
+PALETTE.forEach(c=>{const ch=document.createElement('div');ch.className='chip';ch.style.background=c;
+  ch.addEventListener('click',()=>{if(pop._target==='road')COLOR.road=c;else COLOR.bg=c;
+    syncSwatches();pop.classList.remove('open');drawDesign();});pop.appendChild(ch);});
+function openPop(target,el){pop._target=target;const r=el.getBoundingClientRect();
+  pop.style.left=Math.min(r.left,window.innerWidth-180)+'px';pop.style.top=(r.top-150)+'px';pop.classList.add('open');}
+document.getElementById('sw-road').addEventListener('click',function(){openPop('road',this);});
+document.getElementById('sw-bg').addEventListener('click',function(){openPop('bg',this);});
+document.addEventListener('click',e=>{if(!pop.contains(e.target)&&!e.target.classList.contains('swatch'))pop.classList.remove('open');});
+function syncSwatches(){document.getElementById('sw-road').style.background=COLOR.road;
+  document.getElementById('sw-bg').style.background=COLOR.bg;}
+let TILE=null;
+function buildSnapshot(){TILE={n:S.n,width:(+document.getElementById('width').value)/(DV.R),road:COLOR.road,bg:COLOR.bg,
+  conns:S.conns.map(c=>{const a=find(c[0]),b=find(c[1]);
+    const w=c[2]?{ux:c[2].ux/DV.R, uy:c[2].uy/DV.R}:null;
+    return{a:{edge:a.edge,t:a.t},b:{edge:b.edge,t:b.t},warp:w};})};}
+const tc=document.getElementById('tcanvas'),tx=tc.getContext('2d');
+let grid=[];let animating=false;let TL={};
+function fitTile(){const st=tc.parentElement.getBoundingClientRect();
+  tc.width=st.width;tc.height=st.height;tc._w=st.width;tc._h=st.height;layoutTile();drawTiles();}
+function layoutTile(){const n=+document.getElementById('gridn').value;TL.n=n;
+  if(!TILE){TL.cell=0;return;}
+  if(TILE.n===4){const side=Math.min(tc._w,tc._h)-20;TL.cell=side/n;
+    TL.x0=(tc._w-side)/2;TL.y0=(tc._h-side)/2;TL.type=4;}
+  else if(TILE.n===6){const side=Math.min(tc._w,tc._h)-20;TL.R=side/(n*1.8);TL.type=6;TL.x0=tc._w/2;TL.y0=tc._h/2;}
+  else{ // triangle grid
+    const side=Math.min(tc._w,tc._h)-20;
+    TL.s=side/n;                // triangle edge length
+    TL.h=TL.s*Math.sqrt(3)/2;   // triangle height
+    TL.R=TL.s/Math.sqrt(3);     // circumradius
+    const rows=Math.max(1,Math.round(side/TL.h));
+    TL.rows=rows; TL.cols=2*n-1; // per row: n up + (n-1) down
+    const gridW=(TL.cols+1)*TL.s/2;
+    TL.x0=(tc._w-gridW)/2; TL.y0=(tc._h-rows*TL.h)/2; TL.type=3;}}
+// triangle vertices, centroid at origin, circumradius 1. Always the apex-up shape.
+// The apex-down (▽) cell is rendered by flipping the whole canvas vertically,
+// so BOTH the outline and the roads inside mirror together and stay consistent.
+function triVerts(){
+  return [{x:0,y:-1},{x:Math.sqrt(3)/2,y:0.5},{x:-Math.sqrt(3)/2,y:0.5}];
+}
+function makeGrid(){const n=+document.getElementById('gridn').value;
+  const steps=TILE?(TILE.n===4?4:TILE.n===6?6:3):4;let count=n*n;
+  if(TILE&&TILE.n===6)count=hexCells(n).length;
+  if(TILE&&TILE.n===3){layoutTile();count=TL.rows*TL.cols;}
+  grid=Array.from({length:count},()=>({rot:Math.floor(Math.random()*steps),anim:0,target:null}));}
+function hexCells(n){const cells=[];const half=Math.floor(n/2);
+  for(let r=-half;r<=half;r++){for(let q=-half;q<=half;q++){if(Math.abs(q+r)<=half)cells.push({q,r});}}return cells;}
+function drawTilePoly(ctx,cx,cy,R,rotAngle,triDir){
+  const verts = (TILE.n===3) ? triVerts() : polyVerts(TILE.n);
+  ctx.save();ctx.translate(cx,cy);
+  // apex-down triangle: flip vertically so outline + roads mirror together
+  if(TILE.n===3 && triDir<0) ctx.scale(1,-1);
+  ctx.rotate(rotAngle);
+  ctx.beginPath();verts.forEach((v,i)=>{const x=v.x*R,y=v.y*R;i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.closePath();
+  ctx.fillStyle=TILE.bg;ctx.fill();ctx.save();ctx.clip();
+  const w=TILE.width*R;
+  TILE.conns.forEach(c=>{const ap=edgePt(verts,c.a.edge,c.a.t),bp=edgePt(verts,c.b.edge,c.b.t);
+    const Ax=ap.x*R,Ay=ap.y*R,Bx=bp.x*R,By=bp.y*R;
+    const nA=edgeNormal(verts,c.a.edge),nB=edgeNormal(verts,c.b.edge);
+    const d=Math.hypot(Ax-Bx,Ay-By);const L=Math.max(d*0.38,R*0.12);
+    function path(){
+      ctx.beginPath();ctx.moveTo(Ax,Ay);
+      if(c.warp){const Mx=(Ax+Bx)/2+c.warp.ux*R, My=(Ay+By)/2+c.warp.uy*R;
+        ctx.bezierCurveTo(Ax+nA.x*L*0.7,Ay+nA.y*L*0.7, Mx-(Bx-Ax)*0.18,My-(By-Ay)*0.18, Mx,My);
+        ctx.bezierCurveTo(Mx+(Bx-Ax)*0.18,My+(By-Ay)*0.18, Bx+nB.x*L*0.7,By+nB.y*L*0.7, Bx,By);}
+      else{ctx.bezierCurveTo(Ax+nA.x*L,Ay+nA.y*L, Bx+nB.x*L,By+nB.y*L, Bx,By);}
+    }
+    ctx.lineCap='butt';ctx.strokeStyle='rgba(0,0,0,.4)';ctx.lineWidth=w+5; path(); ctx.stroke();
+    ctx.strokeStyle=TILE.road;ctx.lineWidth=w; path(); ctx.stroke();});
+  ctx.restore();
+  ctx.strokeStyle='rgba(255,255,255,.05)';ctx.lineWidth=1;
+  ctx.beginPath();verts.forEach((v,i)=>{const x=v.x*R,y=v.y*R;i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.closePath();ctx.stroke();
+  ctx.restore();}
+function stepAngle(){return TILE.n===4?Math.PI/2:TILE.n===6?Math.PI/3:2*Math.PI/3;}
+function cellAngle(g){const base=g.rot*stepAngle();
+  if(g.target!==null){return base+stepAngle()*g.anim;}return base;}
+function drawTiles(){tx.clearRect(0,0,tc.width,tc.height);
+  if(!TILE){tx.fillStyle=getCSS('--line');tx.font="16px 'Zen Maru Gothic'";tx.textAlign='center';
+    tx.fillText('まずデザイン画面でタイルを完成させてね',tc.width/2,tc.height/2);return;}
+  const n=TL.n;
+  if(TILE.n===4){const cell=TL.cell,r=cell/Math.SQRT2;
+    for(let i=0;i<n;i++)for(let j=0;j<n;j++){const g=grid[i*n+j];if(!g)continue;
+      const cx=TL.x0+j*cell+cell/2,cy=TL.y0+i*cell+cell/2;drawTilePoly(tx,cx,cy,r,cellAngle(g));}}
+  else if(TILE.n===6){const cells=hexCells(n);const R=TL.R;
+    cells.forEach((hc,idx)=>{const g=grid[idx];if(!g)return;
+      const x=TL.x0+R*Math.sqrt(3)*(hc.q+hc.r/2);const y=TL.y0+R*1.5*hc.r;drawTilePoly(tx,x,y,R,cellAngle(g));});}
+  else{const R=TL.R,s=TL.s,h=TL.h;let idx=0;
+    for(let r=0;r<TL.rows;r++)for(let c=0;c<TL.cols;c++){
+      const g=grid[idx++];if(!g)continue;
+      const up=((r+c)%2===0); // checkerboard: up-triangle's neighbour below is a down-triangle
+      const cx=TL.x0+(c+1)*s/2;
+      const cy=TL.y0+r*h+(up?h*2/3:h/3);
+      drawTilePoly(tx,cx,cy,R,cellAngle(g),up?1:-1);
+    }}}
+function animateTile(g){if(g.target===null)return;animating=true;
+  const start=performance.now(),dur=240;
+  function frame(now){const k=Math.min(1,(now-start)/dur);g.anim=1-Math.pow(1-k,3);drawTiles();
+    if(k<1)requestAnimationFrame(frame);
+    else{g.rot=g.target;g.target=null;g.anim=0;animating=false;drawTiles();}}
+  requestAnimationFrame(frame);}
+function hitTile(x,y){const n=TL.n;
+  if(TILE.n===4){const j=Math.floor((x-TL.x0)/TL.cell),i=Math.floor((y-TL.y0)/TL.cell);
+    if(i<0||j<0||i>=n||j>=n)return null;return i*n+j;}
+  if(TILE.n===6){const cells=hexCells(n);const R=TL.R;let best=null,bd=R;
+    cells.forEach((hc,idx)=>{const cx=TL.x0+R*Math.sqrt(3)*(hc.q+hc.r/2);const cy=TL.y0+R*1.5*hc.r;
+      const d=Math.hypot(cx-x,cy-y);if(d<bd){bd=d;best=idx;}});return best;}
+  {const R=TL.R,s=TL.s,h=TL.h;let best=null,bd=R*1.1;let idx=0;
+    for(let r=0;r<TL.rows;r++)for(let c=0;c<TL.cols;c++){
+      const up=((r+c)%2===0);const cx=TL.x0+(c+1)*s/2;
+      const cy=TL.y0+r*h+(up?h*2/3:h/3);
+      const d=Math.hypot(cx-x,cy-y);if(d<bd){bd=d;best=idx;}idx++;
+    }return best;}}
+tc.addEventListener('click',e=>{if(!TILE||animating)return;
+  const r=tc.getBoundingClientRect();const x=e.clientX-r.left,y=e.clientY-r.top;
+  const id=hitTile(x,y);if(id===null||!grid[id])return;
+  const steps=TILE.n===4?4:TILE.n===6?6:3;
+  grid[id].target=(grid[id].rot+1)%steps;grid[id].anim=0;animateTile(grid[id]);});
+document.getElementById('shuffle').addEventListener('click',()=>{makeGrid();drawTiles();});
+document.getElementById('gridn').addEventListener('input',()=>{layoutTile();makeGrid();drawTiles();});
+function switchScreen(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.screen===name));
+  document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===name));
+  if(name==='design')fitDesign();
+  if(name==='tile'){if(!TILE)buildSnapshot();layoutTile();if(!grid.length)makeGrid();fitTile();}}
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>switchScreen(t.dataset.screen)));
+window.addEventListener('resize',()=>{fitDesign();if(document.getElementById('tile').classList.contains('active'))fitTile();});
+function seed(){S.n=4;ensureTValueAllEdges(0.5);
+  const m=e=>S.points.find(p=>p.edge===e&&Math.abs(p.t-0.5)<0.01);
+  S.conns.push([m(0).id,m(1).id]);S.conns.push([m(2).id,m(3).id]);}
+seed();syncSwatches();fitDesign();
+</script>
+</body>
+</html>
