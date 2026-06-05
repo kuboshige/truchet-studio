@@ -334,8 +334,7 @@ function buildSnapshot(){if(GAME&&GAME.active)stopGame();TILE={n:S.n,width:(+doc
   conns:S.conns.map(c=>{const a=find(c[0]),b=find(c[1]);
     const w=c[2]?{ux:c[2].ux/DV.R, uy:c[2].uy/DV.R}:null;
     return{a:{edge:a.edge,t:a.t},b:{edge:b.edge,t:b.t},warp:w};})};
-  if(TILE.n===4)document.getElementById('startgame').style.display='';
-  else document.getElementById('startgame').style.display='none';}
+  document.getElementById('startgame').style.display='';}
 const tc=document.getElementById('tcanvas'),tx=tc.getContext('2d');
 let grid=[];let animating=false;let TL={};
 function fitTile(){const st=tc.parentElement.getBoundingClientRect();
@@ -451,7 +450,7 @@ function seed(){S.n=4;ensureTValueAllEdges(0.5);
   S.conns.push([m(0).id,m(1).id]);S.conns.push([m(2).id,m(3).id]);}
 seed();syncSwatches();fitDesign();
 
-// ===== GAME MODE — Phase 1: road graph + object movement =====
+// ===== GAME MODE — universal (square / hex / triangle) =====
 
 function cubicBezierEval(p0,p1,p2,p3,u){
   const mt=1-u;
@@ -461,9 +460,11 @@ function cubicBezierEval(p0,p1,p2,p3,u){
     dx:3*mt*mt*(p1.x-p0.x)+6*mt*u*(p2.x-p1.x)+3*u*u*(p3.x-p2.x),
     dy:3*mt*mt*(p1.y-p0.y)+6*mt*u*(p2.y-p1.y)+3*u*u*(p3.y-p2.y)};}
 
-// evaluate road bezier at u∈[0,1] in normalized local tile coords (R=1)
+// Road bezier at u∈[0,1] in normalized local tile coords.
+// Triangles always use triVerts() (the design-screen local space before the
+// triDir flip); the flip is applied later in localToWorldAny().
 function evalTileConn(conn,u){
-  const verts=polyVerts(TILE.n);
+  const verts=TILE.n===3?triVerts():polyVerts(TILE.n);
   const A=edgePt(verts,conn.a.edge,conn.a.t),B=edgePt(verts,conn.b.edge,conn.b.t);
   const nA=edgeNormal(verts,conn.a.edge),nB=edgeNormal(verts,conn.b.edge);
   const d=Math.hypot(A.x-B.x,A.y-B.y),L=Math.max(d*0.38,0.12);
@@ -474,42 +475,63 @@ function evalTileConn(conn,u){
     return cubicBezierEval(M,{x:M.x+fx*0.18,y:M.y+fy*0.18},{x:B.x+nB.x*L*0.7,y:B.y+nB.y*L*0.7},B,(u-0.5)*2);}
   return cubicBezierEval(A,{x:A.x+nA.x*L,y:A.y+nA.y*L},{x:B.x+nB.x*L,y:B.y+nB.y*L},B,u);}
 
-// get tile rendering info (square only)
-function getTileInfo(idx){
-  if(!TILE||TILE.n!==4)return null;
-  const n=TL.n,cell=TL.cell,col=idx%n,row=Math.floor(idx/n);
-  return{cx:TL.x0+col*cell+cell/2,cy:TL.y0+row*cell+cell/2,
-    R:cell/Math.SQRT2,angle:cellAngle(grid[idx]),row,col};}
+// Rendering info for any tile type.
+// triDir: +1 for up-pointing triangles, -1 for down-pointing (canvas is flipped
+// via scale(1,-1) for down triangles in drawTilePoly, so y-coords invert).
+function getTileInfoAny(idx){
+  if(!TILE||!grid[idx])return null;
+  let cx,cy,R,triDir=1;const angle=cellAngle(grid[idx]);
+  if(TILE.n===4){
+    const n=TL.n,cell=TL.cell,col=idx%n,row=Math.floor(idx/n);
+    cx=TL.x0+col*cell+cell/2;cy=TL.y0+row*cell+cell/2;R=cell/Math.SQRT2;
+  }else if(TILE.n===6){
+    const cells=hexCells(TL.n),hc=cells[idx];if(!hc)return null;
+    R=TL.R;cx=TL.x0+R*Math.sqrt(3)*(hc.q+hc.r/2);cy=TL.y0+R*1.5*hc.r;
+  }else{
+    const cols=TL.cols,c=idx%cols,r=Math.floor(idx/cols);
+    const up=(r+c)%2===0;triDir=up?1:-1;
+    cx=TL.x0+(c+1)*TL.s/2;cy=TL.y0+r*TL.h+(up?TL.h*2/3:TL.h/3);R=TL.R;}
+  return{cx,cy,R,angle,triDir};}
 
-function localToWorld(lx,ly,ti){
+// Local normalized coords → world canvas coords, handling triDir flip.
+// For down triangles, drawTilePoly applies scale(1,-1) before rotate, so
+// the local y-axis is negated before the rotation transform.
+function localToWorldAny(lx,ly,ti){
+  const fly=ti.triDir*ly; // flip y for down triangles
   const cos=Math.cos(ti.angle),sin=Math.sin(ti.angle);
-  return{x:ti.cx+ti.R*(lx*cos-ly*sin),y:ti.cy+ti.R*(lx*sin+ly*cos)};}
+  return{x:ti.cx+ti.R*(lx*cos-fly*sin),y:ti.cy+ti.R*(lx*sin+fly*cos)};}
 
-// world edge → neighbor direction for square grid
-// world edges: 0=bottom,1=left,2=top,3=right (based on polyVerts(4) with π/4 offset)
-const SQ_EDGE=[{dr:1,dc:0,ne:2},{dr:0,dc:-1,ne:3},{dr:-1,dc:0,ne:0},{dr:0,dc:1,ne:1}];
+// Circumradius of the current tile type (for distance thresholds)
+function tileR(){return TILE.n===4?TL.cell/Math.SQRT2:TL.R||0;}
 
-function sqNeighbor(row,col,we){
-  const e=SQ_EDGE[we],n=TL.n,nr=row+e.dr,nc=col+e.dc;
-  if(nr<0||nc<0||nr>=n||nc>=n)return null;
-  return{idx:nr*n+nc,ne:e.ne};}
+// World position of one endpoint (side='a'|'b') of a road in any tile
+function getEndpointWorld(tileIdx,connIdx,side){
+  const ti=getTileInfoAny(tileIdx);if(!ti)return null;
+  const ep=TILE.conns[connIdx][side];
+  const verts=TILE.n===3?triVerts():polyVerts(TILE.n);
+  return localToWorldAny(edgePt(verts,ep.edge,ep.t).x,edgePt(verts,ep.edge,ep.t).y,ti);}
 
-// find which road segment in tileIdx connects to worldEdge at entryT
-function findRoadEntry(tileIdx,worldEdge,entryT){
-  const g=grid[tileIdx],n=TILE.n;
-  const le=((worldEdge-g.rot)%n+n)%n,tv=round(entryT);
-  for(let i=0;i<TILE.conns.length;i++){
-    const c=TILE.conns[i];
-    if(c.a.edge===le&&Math.abs(round(c.a.t)-tv)<0.02)return{connIdx:i,side:'a'};
-    if(c.b.edge===le&&Math.abs(round(c.b.t)-tv)<0.02)return{connIdx:i,side:'b'};}
-  return null;}
+// Find the road endpoint in any tile (excluding current) closest to world pos (wx,wy).
+// This is the universal neighbor-connection strategy that works for all tile shapes
+// and rotation combinations without shape-specific edge algebra.
+function findEntryByWorldPos(wx,wy,excludeIdx){
+  const thr=tileR()*0.07+1;
+  let best=null,bd=Infinity;
+  for(let idx=0;idx<grid.length;idx++){
+    if(idx===excludeIdx)continue;
+    for(let ci=0;ci<TILE.conns.length;ci++){
+      for(const s of['a','b']){
+        const wp=getEndpointWorld(idx,ci,s);if(!wp)continue;
+        const d=Math.hypot(wp.x-wx,wp.y-wy);
+        if(d<bd){bd=d;best={tileIdx:idx,connIdx:ci,side:s};}}}}
+  return bd<thr?best:null;}
 
 const GAME={active:false,tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,rafId:null};
 const G_BASE=0.55,G_A=0.035;
 function gameSpeed(t){return G_BASE*Math.exp(G_A*t);}
 
 function startGame(){
-  if(!TILE||TILE.n!==4||!TILE.conns.length)return;
+  if(!TILE||!TILE.conns.length)return;
   GAME.active=true;
   GAME.tileIdx=Math.floor(Math.random()*grid.length);
   GAME.connIdx=Math.floor(Math.random()*TILE.conns.length);
@@ -529,22 +551,16 @@ function gameLoop(now){
   GAME.lastTime=now;GAME.elapsed+=dt;
   GAME.u+=gameSpeed(GAME.elapsed)*dt*GAME.dir;
 
-  // handle tile boundary crossings
   let safety=0;
   while(safety++<8){
     if(GAME.u>=0&&GAME.u<=1)break;
     const exitSide=GAME.u>1?'b':'a';
-    const conn=TILE.conns[GAME.connIdx];
-    const ep=exitSide==='b'?conn.b:conn.a;
-    const g=grid[GAME.tileIdx],n=TILE.n;
-    const we=((ep.edge+g.rot)%n+n)%n;
-    const ti=getTileInfo(GAME.tileIdx);
-    const nb=sqNeighbor(ti.row,ti.col,we);
-    const over=exitSide==='b'?GAME.u-1:-GAME.u;
-    if(!nb){GAME.u=exitSide==='b'?1:0;stopGame();return;}
-    const res=findRoadEntry(nb.idx,nb.ne,1-ep.t);
+    const over=GAME.u>1?GAME.u-1:-GAME.u;
+    const wp=getEndpointWorld(GAME.tileIdx,GAME.connIdx,exitSide);
+    if(!wp){GAME.u=exitSide==='b'?1:0;stopGame();return;}
+    const res=findEntryByWorldPos(wp.x,wp.y,GAME.tileIdx);
     if(!res){GAME.u=exitSide==='b'?1:0;stopGame();return;}
-    GAME.tileIdx=nb.idx;GAME.connIdx=res.connIdx;
+    GAME.tileIdx=res.tileIdx;GAME.connIdx=res.connIdx;
     if(res.side==='a'){GAME.u=Math.min(over,0.99);GAME.dir=1;}
     else{GAME.u=Math.max(1-over,0.01);GAME.dir=-1;}}
 
@@ -553,30 +569,22 @@ function gameLoop(now){
   GAME.rafId=requestAnimationFrame(gameLoop);}
 
 function drawGameObject(){
-  const ti=getTileInfo(GAME.tileIdx);
-  if(!ti)return;
+  const ti=getTileInfoAny(GAME.tileIdx);if(!ti)return;
   const conn=TILE.conns[GAME.connIdx];
-  const uc=Math.max(0.001,Math.min(0.999,GAME.u));
-  const pt=evalTileConn(conn,uc);
-  const wp=localToWorld(pt.x,pt.y,ti);
+  const pt=evalTileConn(conn,Math.max(0.001,Math.min(0.999,GAME.u)));
+  const wp=localToWorldAny(pt.x,pt.y,ti);
+  // Tangent: apply triDir flip to y before rotating (mirrors the draw transform)
+  const ldx=pt.dx,ldy=ti.triDir*pt.dy;
   const cos=Math.cos(ti.angle),sin=Math.sin(ti.angle);
-  const tdx=(pt.dx*cos-pt.dy*sin)*GAME.dir;
-  const tdy=(pt.dx*sin+pt.dy*cos)*GAME.dir;
-  const angle=Math.atan2(tdy,tdx);
+  const tdx=(ldx*cos-ldy*sin)*GAME.dir,tdy=(ldx*sin+ldy*cos)*GAME.dir;
   const sz=TILE.width*ti.R*0.65;
   tx.save();
   tx.translate(wp.x,wp.y);
-  tx.rotate(angle-Math.PI/2);
-  tx.beginPath();
-  tx.moveTo(0,-sz);
-  tx.lineTo(sz*0.55,sz*0.65);
-  tx.lineTo(-sz*0.55,sz*0.65);
-  tx.closePath();
+  tx.rotate(Math.atan2(tdy,tdx)-Math.PI/2);
+  tx.beginPath();tx.moveTo(0,-sz);tx.lineTo(sz*0.55,sz*0.65);tx.lineTo(-sz*0.55,sz*0.65);tx.closePath();
   tx.fillStyle='rgba(255,255,255,0.95)';
-  tx.shadowColor='rgba(255,200,60,0.85)';
-  tx.shadowBlur=sz*2.2;
-  tx.fill();
-  tx.restore();}
+  tx.shadowColor='rgba(255,200,60,0.85)';tx.shadowBlur=sz*2.2;
+  tx.fill();tx.restore();}
 
 document.getElementById('startgame').addEventListener('click',()=>{
   if(GAME.active){stopGame();}
