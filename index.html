@@ -572,7 +572,6 @@ function startGame(){
   document.getElementById('gametimer').style.opacity='1';
   GAME.lookahead=runLookahead();applyLookahead();
   setGameState('playing');
-  history.pushState({game:true},'');
   GAME.rafId=requestAnimationFrame(gameLoop);}
 
 function stopGame(){
