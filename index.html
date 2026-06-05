@@ -81,6 +81,7 @@
       <div class="toolbar">
         <label>枚数 <input type="range" id="gridn" min="2" max="8" value="4"></label>
         <button class="btn btn-ghost" id="shuffle">シャッフル</button>
+        <button class="btn btn-primary" id="startgame" style="display:none">▶ スタート</button>
         <span class="hint">タイルをタップで回転（四角90°/三角120°/六角60°）＋アニメ ／ どの向きでも道はつながる</span>
       </div>
     </section>
@@ -329,10 +330,12 @@ document.addEventListener('click',e=>{if(!pop.contains(e.target)&&!e.target.clas
 function syncSwatches(){document.getElementById('sw-road').style.background=COLOR.road;
   document.getElementById('sw-bg').style.background=COLOR.bg;}
 let TILE=null;
-function buildSnapshot(){TILE={n:S.n,width:(+document.getElementById('width').value)/(DV.R),road:COLOR.road,bg:COLOR.bg,
+function buildSnapshot(){if(GAME&&GAME.active)stopGame();TILE={n:S.n,width:(+document.getElementById('width').value)/(DV.R),road:COLOR.road,bg:COLOR.bg,
   conns:S.conns.map(c=>{const a=find(c[0]),b=find(c[1]);
     const w=c[2]?{ux:c[2].ux/DV.R, uy:c[2].uy/DV.R}:null;
-    return{a:{edge:a.edge,t:a.t},b:{edge:b.edge,t:b.t},warp:w};})};}
+    return{a:{edge:a.edge,t:a.t},b:{edge:b.edge,t:b.t},warp:w};})};
+  if(TILE.n===4)document.getElementById('startgame').style.display='';
+  else document.getElementById('startgame').style.display='none';}
 const tc=document.getElementById('tcanvas'),tx=tc.getContext('2d');
 let grid=[];let animating=false;let TL={};
 function fitTile(){const st=tc.parentElement.getBoundingClientRect();
@@ -429,17 +432,17 @@ function hitTile(x,y){const n=TL.n;
       const cy=TL.y0+r*h+(up?h*2/3:h/3);
       const d=Math.hypot(cx-x,cy-y);if(d<bd){bd=d;best=idx;}idx++;
     }return best;}}
-tc.addEventListener('click',e=>{if(!TILE||animating)return;
+tc.addEventListener('click',e=>{if(!TILE||animating||GAME.active)return;
   const r=tc.getBoundingClientRect();const x=e.clientX-r.left,y=e.clientY-r.top;
   const id=hitTile(x,y);if(id===null||!grid[id])return;
   const steps=TILE.n===4?4:TILE.n===6?6:3;
   grid[id].target=(grid[id].rot+1)%steps;grid[id].anim=0;animateTile(grid[id]);});
-document.getElementById('shuffle').addEventListener('click',()=>{makeGrid();drawTiles();});
-document.getElementById('gridn').addEventListener('input',()=>{layoutTile();makeGrid();drawTiles();});
+document.getElementById('shuffle').addEventListener('click',()=>{if(GAME.active)stopGame();makeGrid();drawTiles();});
+document.getElementById('gridn').addEventListener('input',()=>{if(GAME.active)stopGame();layoutTile();makeGrid();drawTiles();});
 function switchScreen(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.screen===name));
   document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===name));
-  if(name==='design')fitDesign();
+  if(name==='design'){if(GAME.active)stopGame();fitDesign();}
   if(name==='tile'){if(!TILE)buildSnapshot();layoutTile();if(!grid.length)makeGrid();fitTile();}}
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>switchScreen(t.dataset.screen)));
 window.addEventListener('resize',()=>{fitDesign();if(document.getElementById('tile').classList.contains('active'))fitTile();});
@@ -447,6 +450,137 @@ function seed(){S.n=4;ensureTValueAllEdges(0.5);
   const m=e=>S.points.find(p=>p.edge===e&&Math.abs(p.t-0.5)<0.01);
   S.conns.push([m(0).id,m(1).id]);S.conns.push([m(2).id,m(3).id]);}
 seed();syncSwatches();fitDesign();
+
+// ===== GAME MODE — Phase 1: road graph + object movement =====
+
+function cubicBezierEval(p0,p1,p2,p3,u){
+  const mt=1-u;
+  return{
+    x:mt*mt*mt*p0.x+3*mt*mt*u*p1.x+3*mt*u*u*p2.x+u*u*u*p3.x,
+    y:mt*mt*mt*p0.y+3*mt*mt*u*p1.y+3*mt*u*u*p2.y+u*u*u*p3.y,
+    dx:3*mt*mt*(p1.x-p0.x)+6*mt*u*(p2.x-p1.x)+3*u*u*(p3.x-p2.x),
+    dy:3*mt*mt*(p1.y-p0.y)+6*mt*u*(p2.y-p1.y)+3*u*u*(p3.y-p2.y)};}
+
+// evaluate road bezier at u∈[0,1] in normalized local tile coords (R=1)
+function evalTileConn(conn,u){
+  const verts=polyVerts(TILE.n);
+  const A=edgePt(verts,conn.a.edge,conn.a.t),B=edgePt(verts,conn.b.edge,conn.b.t);
+  const nA=edgeNormal(verts,conn.a.edge),nB=edgeNormal(verts,conn.b.edge);
+  const d=Math.hypot(A.x-B.x,A.y-B.y),L=Math.max(d*0.38,0.12);
+  if(conn.warp){
+    const M={x:(A.x+B.x)/2+conn.warp.ux,y:(A.y+B.y)/2+conn.warp.uy};
+    const fx=B.x-A.x,fy=B.y-A.y;
+    if(u<=0.5)return cubicBezierEval(A,{x:A.x+nA.x*L*0.7,y:A.y+nA.y*L*0.7},{x:M.x-fx*0.18,y:M.y-fy*0.18},M,u*2);
+    return cubicBezierEval(M,{x:M.x+fx*0.18,y:M.y+fy*0.18},{x:B.x+nB.x*L*0.7,y:B.y+nB.y*L*0.7},B,(u-0.5)*2);}
+  return cubicBezierEval(A,{x:A.x+nA.x*L,y:A.y+nA.y*L},{x:B.x+nB.x*L,y:B.y+nB.y*L},B,u);}
+
+// get tile rendering info (square only)
+function getTileInfo(idx){
+  if(!TILE||TILE.n!==4)return null;
+  const n=TL.n,cell=TL.cell,col=idx%n,row=Math.floor(idx/n);
+  return{cx:TL.x0+col*cell+cell/2,cy:TL.y0+row*cell+cell/2,
+    R:cell/Math.SQRT2,angle:cellAngle(grid[idx]),row,col};}
+
+function localToWorld(lx,ly,ti){
+  const cos=Math.cos(ti.angle),sin=Math.sin(ti.angle);
+  return{x:ti.cx+ti.R*(lx*cos-ly*sin),y:ti.cy+ti.R*(lx*sin+ly*cos)};}
+
+// world edge → neighbor direction for square grid
+// world edges: 0=bottom,1=left,2=top,3=right (based on polyVerts(4) with π/4 offset)
+const SQ_EDGE=[{dr:1,dc:0,ne:2},{dr:0,dc:-1,ne:3},{dr:-1,dc:0,ne:0},{dr:0,dc:1,ne:1}];
+
+function sqNeighbor(row,col,we){
+  const e=SQ_EDGE[we],n=TL.n,nr=row+e.dr,nc=col+e.dc;
+  if(nr<0||nc<0||nr>=n||nc>=n)return null;
+  return{idx:nr*n+nc,ne:e.ne};}
+
+// find which road segment in tileIdx connects to worldEdge at entryT
+function findRoadEntry(tileIdx,worldEdge,entryT){
+  const g=grid[tileIdx],n=TILE.n;
+  const le=((worldEdge-g.rot)%n+n)%n,tv=round(entryT);
+  for(let i=0;i<TILE.conns.length;i++){
+    const c=TILE.conns[i];
+    if(c.a.edge===le&&Math.abs(round(c.a.t)-tv)<0.02)return{connIdx:i,side:'a'};
+    if(c.b.edge===le&&Math.abs(round(c.b.t)-tv)<0.02)return{connIdx:i,side:'b'};}
+  return null;}
+
+const GAME={active:false,tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,rafId:null};
+const G_BASE=0.55,G_A=0.035;
+function gameSpeed(t){return G_BASE*Math.exp(G_A*t);}
+
+function startGame(){
+  if(!TILE||TILE.n!==4||!TILE.conns.length)return;
+  GAME.active=true;
+  GAME.tileIdx=Math.floor(Math.random()*grid.length);
+  GAME.connIdx=Math.floor(Math.random()*TILE.conns.length);
+  GAME.u=0.5;GAME.dir=1;GAME.elapsed=0;GAME.lastTime=performance.now();
+  GAME.rafId=requestAnimationFrame(gameLoop);}
+
+function stopGame(){
+  GAME.active=false;
+  if(GAME.rafId){cancelAnimationFrame(GAME.rafId);GAME.rafId=null;}
+  const btn=document.getElementById('startgame');
+  if(btn)btn.textContent='▶ スタート';
+  drawTiles();}
+
+function gameLoop(now){
+  if(!GAME.active)return;
+  const dt=Math.min((now-GAME.lastTime)/1000,0.1);
+  GAME.lastTime=now;GAME.elapsed+=dt;
+  GAME.u+=gameSpeed(GAME.elapsed)*dt*GAME.dir;
+
+  // handle tile boundary crossings
+  let safety=0;
+  while(safety++<8){
+    if(GAME.u>=0&&GAME.u<=1)break;
+    const exitSide=GAME.u>1?'b':'a';
+    const conn=TILE.conns[GAME.connIdx];
+    const ep=exitSide==='b'?conn.b:conn.a;
+    const g=grid[GAME.tileIdx],n=TILE.n;
+    const we=((ep.edge+g.rot)%n+n)%n;
+    const ti=getTileInfo(GAME.tileIdx);
+    const nb=sqNeighbor(ti.row,ti.col,we);
+    const over=exitSide==='b'?GAME.u-1:-GAME.u;
+    if(!nb){GAME.u=exitSide==='b'?1:0;stopGame();return;}
+    const res=findRoadEntry(nb.idx,nb.ne,1-ep.t);
+    if(!res){GAME.u=exitSide==='b'?1:0;stopGame();return;}
+    GAME.tileIdx=nb.idx;GAME.connIdx=res.connIdx;
+    if(res.side==='a'){GAME.u=Math.min(over,0.99);GAME.dir=1;}
+    else{GAME.u=Math.max(1-over,0.01);GAME.dir=-1;}}
+
+  drawTiles();
+  drawGameObject();
+  GAME.rafId=requestAnimationFrame(gameLoop);}
+
+function drawGameObject(){
+  const ti=getTileInfo(GAME.tileIdx);
+  if(!ti)return;
+  const conn=TILE.conns[GAME.connIdx];
+  const uc=Math.max(0.001,Math.min(0.999,GAME.u));
+  const pt=evalTileConn(conn,uc);
+  const wp=localToWorld(pt.x,pt.y,ti);
+  const cos=Math.cos(ti.angle),sin=Math.sin(ti.angle);
+  const tdx=(pt.dx*cos-pt.dy*sin)*GAME.dir;
+  const tdy=(pt.dx*sin+pt.dy*cos)*GAME.dir;
+  const angle=Math.atan2(tdy,tdx);
+  const sz=TILE.width*ti.R*0.65;
+  tx.save();
+  tx.translate(wp.x,wp.y);
+  tx.rotate(angle-Math.PI/2);
+  tx.beginPath();
+  tx.moveTo(0,-sz);
+  tx.lineTo(sz*0.55,sz*0.65);
+  tx.lineTo(-sz*0.55,sz*0.65);
+  tx.closePath();
+  tx.fillStyle='rgba(255,255,255,0.95)';
+  tx.shadowColor='rgba(255,200,60,0.85)';
+  tx.shadowBlur=sz*2.2;
+  tx.fill();
+  tx.restore();}
+
+document.getElementById('startgame').addEventListener('click',()=>{
+  if(GAME.active){stopGame();}
+  else{startGame();document.getElementById('startgame').textContent='■ 停止';}});
 </script>
 </body>
 </html>
