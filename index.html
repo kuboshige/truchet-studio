@@ -685,32 +685,33 @@ function gameLoop(now){
   GAME.rafId=requestAnimationFrame(gameLoop);}
 
 function drawHighlight(){
-  if(!TILE||!GAME.lookahead)return;
-  const path=GAME.lookahead.path;if(!path||!path.length)return;
-  // Collect world-space points 10 cells ahead
+  if(!TILE)return;
   const MAX_CELLS=10,SAMP=16;
   const pts=[];
-  for(let cellI=0;cellI<MAX_CELLS&&cellI<path.length;cellI++){
-    const node=path[cellI];
-    const ti=getTileInfoAny(node.ti);if(!ti)break;
-    const conn=TILE.conns[node.ci];if(!conn)break;
-    const uS=cellI===0?GAME.u:(node.d===1?0.001:0.999);
-    const uE=node.d===1?0.999:0.001;
-    const steps=cellI===0?SAMP:SAMP;
-    for(let i=0;i<=steps;i++){
-      const u=uS+(uE-uS)*i/steps;
+  let ti=GAME.tileIdx,ci=GAME.connIdx,d=GAME.dir;
+  for(let cellI=0;cellI<MAX_CELLS;cellI++){
+    const tileInfo=getTileInfoAny(ti);if(!tileInfo)break;
+    const conn=TILE.conns[ci];if(!conn)break;
+    const uS=cellI===0?GAME.u:(d===1?0.001:0.999);
+    const uE=d===1?0.999:0.001;
+    for(let i=0;i<=SAMP;i++){
+      const u=uS+(uE-uS)*i/SAMP;
       const pt=evalTileConn(conn,Math.max(0.001,Math.min(0.999,u)));
-      pts.push({...localToWorldAny(pt.x,pt.y,ti),cell:cellI});}}
+      pts.push(localToWorldAny(pt.x,pt.y,tileInfo));}
+    // 次タイルへ
+    const side=d===1?'b':'a';
+    const wp=getEndpointWorld(ti,ci,side);if(!wp)break;
+    const res=findEntryByWorldPos(wp.x,wp.y,ti);if(!res)break;
+    ti=res.tileIdx;ci=res.connIdx;d=res.side==='a'?1:-1;}
   if(pts.length<2)return;
-  const ti0=getTileInfoAny(path[0].ti);if(!ti0)return;
+  const ti0=getTileInfoAny(GAME.tileIdx);if(!ti0)return;
   const w=TILE.width*ti0.R;
   const total=pts.length-1;
   tx.save();tx.lineCap='round';tx.lineJoin='round';
   for(let i=0;i<total;i++){
     const frac=i/total;
-    const alpha=0.55*(1-frac*frac);
     tx.beginPath();tx.moveTo(pts[i].x,pts[i].y);tx.lineTo(pts[i+1].x,pts[i+1].y);
-    tx.strokeStyle=`rgba(255,160,160,${alpha})`;
+    tx.strokeStyle=`rgba(255,160,160,${0.55*(1-frac*frac)})`;
     tx.lineWidth=w*(1-frac*0.5);
     tx.stroke();}
   tx.restore();}
