@@ -559,9 +559,9 @@ function findEntryByWorldPos(wx,wy,excludeIdx){
 
 const GAME={state:'idle',tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,rafId:null,
   lookahead:null,stepsToFreeze:Infinity,timerFrozen:false,frozenTime:0,
-  loopSpeedMult:1,rotatedDuringLoop:new Set()};
+  loopSpeedMult:1,rotatedDuringLoop:new Set(),loopExtraElapsed:0};
 const G_BASE=0.55,G_A=0.0035;
-function gameSpeed(t){return G_BASE*Math.exp(G_A*t)*GAME.loopSpeedMult;}
+function gameSpeed(t){return G_BASE*Math.exp(G_A*(t+GAME.loopExtraElapsed));}
 
 function formatTimer(e){
   const cs=Math.floor(e*100)%100,s=Math.floor(e)%60,m=Math.floor(e/60);
@@ -586,7 +586,7 @@ function startGame(){
   GAME.connIdx=Math.floor(Math.random()*TILE.conns.length);
   GAME.u=0.5;GAME.dir=1;GAME.elapsed=0;GAME.lastTime=performance.now();
   GAME.timerFrozen=false;GAME.frozenTime=0;GAME.stepsToFreeze=Infinity;
-  GAME.loopSpeedMult=1;GAME.rotatedDuringLoop.clear();
+  GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
   document.getElementById('gametimer').style.opacity='1';
   GAME.lookahead=runLookahead();applyLookahead();
   setGameState('playing');
@@ -597,7 +597,7 @@ function stopGame(){
   if(GAME.state==='idle')return;
   if(GAME.rafId){cancelAnimationFrame(GAME.rafId);GAME.rafId=null;}
   GAME.lookahead=null;GAME.stepsToFreeze=Infinity;GAME.timerFrozen=false;GAME.frozenTime=0;
-  GAME.loopSpeedMult=1;GAME.rotatedDuringLoop.clear();
+  GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
   setGameState('idle');
   drawTiles();}
 
@@ -616,6 +616,7 @@ function gameLoop(now){
   if(GAME.state!=='playing')return;
   const dt=Math.min((now-GAME.lastTime)/1000,0.1);
   GAME.lastTime=now;GAME.elapsed+=dt;
+  if(GAME.timerFrozen)GAME.loopExtraElapsed+=dt*2; // ループ中は加速度3倍
   if(!GAME.timerFrozen)
     document.getElementById('gametimer').textContent=formatTimer(GAME.elapsed);
   const _conn=TILE.conns[GAME.connIdx];
@@ -640,7 +641,6 @@ function gameLoop(now){
       GAME.stepsToFreeze--;
       if(GAME.stepsToFreeze<=0){
         GAME.timerFrozen=true;GAME.frozenTime=GAME.elapsed;
-        GAME.loopSpeedMult=3; // ループ継続中は速度3倍
         const el=document.getElementById('gametimer');
         el.textContent=formatTimer(GAME.frozenTime);el.style.opacity='0.4';}}
     // 回転済みタイルに乗ったら先読み再チェック（ループ脱出判定）
@@ -728,7 +728,7 @@ function applyLookahead(){
   }else{
     // デッドエンド or オープン → ループ脱出: タイマー再開・速度倍率リセット
     GAME.timerFrozen=false;GAME.stepsToFreeze=Infinity;
-    GAME.loopSpeedMult=1;GAME.rotatedDuringLoop.clear();
+    GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
     const el=document.getElementById('gametimer');
     if(el)el.style.opacity='1';}}
 
