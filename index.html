@@ -441,9 +441,12 @@ function animateTile(g){if(g.target===null)return;animating=true;
     if(k<1)requestAnimationFrame(frame);
     else{g.rot=g.target;g.target=null;g.anim=0;animating=false;drawTiles();
       if(GAME.state==='playing'){
-        // ループ中にタイルを回転させたら「要チェックタイル」として記録
-        if(GAME.timerFrozen){const idx=grid.indexOf(g);if(idx>=0)GAME.rotatedDuringLoop.add(idx);}
-        GAME.lookahead=runLookahead();applyLookahead();}}}
+        if(GAME.timerFrozen){
+          // フリーズ中: タイマー状態は変えず、回転タイルを記録してlookaheadデータだけ更新
+          const idx=grid.indexOf(g);if(idx>=0)GAME.rotatedDuringLoop.add(idx);
+          GAME.lookahead=runLookahead(); // applyLookaheadは呼ばない（即再開させない）
+        }else{
+          GAME.lookahead=runLookahead();applyLookahead();}}}
   requestAnimationFrame(frame);}
 function hitTile(x,y){const n=TL.n;
   if(TILE.n===4){const j=Math.floor((x-TL.x0)/TL.cell),i=Math.floor((y-TL.y0)/TL.cell);
@@ -645,6 +648,10 @@ function gameLoop(now){
         el.textContent=formatTimer(GAME.frozenTime);el.style.opacity='0.4';}}
     // 回転済みタイルに乗ったら先読み再チェック（ループ脱出判定）
     if(GAME.timerFrozen&&GAME.rotatedDuringLoop.has(GAME.tileIdx)){
+      // 回転済みタイルに到達 → 無条件でタイマー再開（新ループでも一旦解除）
+      GAME.timerFrozen=false;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
+      const el=document.getElementById('gametimer');if(el)el.style.opacity='1';
+      // 新しいループ検出をリスタート
       GAME.lookahead=runLookahead();applyLookahead();}}
 
   try{drawTiles();}catch(e){console.error('drawTiles error',e);}
