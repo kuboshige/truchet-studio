@@ -446,8 +446,8 @@ function animateTile(g){if(g.target===null)return;animating=true;
           const idx=grid.indexOf(g);if(idx>=0)GAME.rotatedDuringLoop.add(idx);
           GAME.lookahead=runLookahead(); // applyLookaheadは呼ばない（即再開させない）
         }else{
-          GAME.lookahead=runLookahead();applyLookahead();}}}
-  requestAnimationFrame(frame);}}
+          GAME.lookahead=runLookahead();applyLookahead();}}}}
+  requestAnimationFrame(frame);}
 function hitTile(x,y){const n=TL.n;
   if(TILE.n===4){const j=Math.floor((x-TL.x0)/TL.cell),i=Math.floor((y-TL.y0)/TL.cell);
     if(i<0||j<0||i>=n||j>=n)return null;return i*n+j;}
