@@ -405,9 +405,9 @@ function drawTilePoly(ctx,cx,cy,R,rotAngle,triDir){
     }
     ctx.lineCap='butt';ctx.strokeStyle='rgba(0,0,0,.4)';ctx.lineWidth=w+5; path(); ctx.stroke();
     ctx.strokeStyle=TILE.road;ctx.lineWidth=w; path(); ctx.stroke();});
-  // 交差ギャップ: conn[i]（下）にギャップを開け、conn[j]（上）を再描画
+  // 交差する場合: 上側の道路に白いアウトライン（ハロー）を描き、下側の道路を覆って立体感を表現
   if(TILE.conns.length>1){
-    const mkPath=(ctx,c,R,verts)=>{
+    const mkPath=(c)=>{
       const ap=edgePt(verts,c.a.edge,c.a.t),bp=edgePt(verts,c.b.edge,c.b.t);
       const Ax=ap.x*R,Ay=ap.y*R,Bx=bp.x*R,By=bp.y*R;
       const nA=edgeNormal(verts,c.a.edge),nB=edgeNormal(verts,c.b.edge);
@@ -419,21 +419,11 @@ function drawTilePoly(ctx,cx,cy,R,rotAngle,triDir){
       else ctx.bezierCurveTo(Ax+nA.x*L,Ay+nA.y*L,Bx+nB.x*L,By+nB.y*L,Bx,By);};
     for(let i=0;i<TILE.conns.length-1;i++){
       for(let j=i+1;j<TILE.conns.length;j++){
-        const xs=findBezierCrossings(TILE.conns[i],TILE.conns[j]);
-        if(!xs.length)continue;
-        xs.forEach(({uA})=>{
-          const pt=evalTileConn(TILE.conns[i],Math.max(0.001,Math.min(0.999,uA)));
-          const gx=pt.x*R,gy=pt.y*R;
-          const tlen=Math.hypot(pt.dx,pt.dy)||1;
-          const half=w*1.1;
-          ctx.beginPath();
-          ctx.moveTo(gx-pt.dx/tlen*half,gy-pt.dy/tlen*half);
-          ctx.lineTo(gx+pt.dx/tlen*half,gy+pt.dy/tlen*half);
-          ctx.strokeStyle=TILE.bg;ctx.lineWidth=w+6;ctx.lineCap='round';ctx.stroke();});
-        // 上側のconnを再描画
-        mkPath(ctx,TILE.conns[j],R,verts);
-        ctx.strokeStyle='rgba(0,0,0,.4)';ctx.lineWidth=w+5;ctx.lineCap='butt';ctx.stroke();
-        mkPath(ctx,TILE.conns[j],R,verts);
+        if(!findBezierCrossings(TILE.conns[i],TILE.conns[j]).length)continue;
+        // 上側 conn[j] を白いハロー（w*1.7）→ 道路色（w）の順で再描画
+        mkPath(TILE.conns[j]);
+        ctx.strokeStyle='rgba(255,255,255,0.88)';ctx.lineWidth=w*1.7;ctx.lineCap='butt';ctx.stroke();
+        mkPath(TILE.conns[j]);
         ctx.strokeStyle=TILE.road;ctx.lineWidth=w;ctx.stroke();}}}
   ctx.restore();
   ctx.strokeStyle='rgba(255,255,255,.05)';ctx.lineWidth=1;
