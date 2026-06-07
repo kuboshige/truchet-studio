@@ -420,9 +420,11 @@ function drawTilePoly(ctx,cx,cy,R,rotAngle,triDir){
     for(let i=0;i<TILE.conns.length-1;i++){
       for(let j=i+1;j<TILE.conns.length;j++){
         if(!findBezierCrossings(TILE.conns[i],TILE.conns[j]).length)continue;
-        // 上側 conn[j] を白いハロー（w*1.7）→ 道路色（w）の順で再描画
+        // 上側 conn[j] を 白ハロー→黒アウトライン→道路色 の順で再描画
         mkPath(TILE.conns[j]);
-        ctx.strokeStyle='rgba(255,255,255,0.88)';ctx.lineWidth=w*1.7;ctx.lineCap='butt';ctx.stroke();
+        ctx.strokeStyle='rgba(255,255,255,0.88)';ctx.lineWidth=w*2.4;ctx.lineCap='butt';ctx.stroke();
+        mkPath(TILE.conns[j]);
+        ctx.strokeStyle='rgba(0,0,0,.4)';ctx.lineWidth=w+5;ctx.stroke();
         mkPath(TILE.conns[j]);
         ctx.strokeStyle=TILE.road;ctx.lineWidth=w;ctx.stroke();}}}
   ctx.restore();
