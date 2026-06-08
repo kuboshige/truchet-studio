@@ -92,6 +92,20 @@
         <button class="btn btn-ghost" id="pm-restart" style="width:140px">↺ 最初から</button>
         <button class="btn btn-ghost" id="pm-quit" style="width:140px">✕ やめる</button>
       </div>
+      <div id="gameover" style="position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:0;z-index:60;background:rgba(14,12,20,.92)">
+        <p style="font-family:'Zen Maru Gothic',sans-serif;font-size:17px;font-weight:700;color:var(--accent);margin:0 0 14px;letter-spacing:2px">GAME OVER</p>
+        <canvas id="gocanvas" width="100" height="100" style="border-radius:14px;border:1px solid rgba(122,92,255,.35)"></canvas>
+        <div style="display:flex;gap:20px;align-items:baseline;margin:12px 0 2px">
+          <span id="go-time" style="font-family:'Major Mono Display',monospace;font-size:26px;color:var(--line)"></span>
+          <span id="go-speed" style="font-size:13px;opacity:.65"></span>
+        </div>
+        <div id="go-newrecord" style="display:none;color:var(--gold);font-size:13px;font-weight:700;margin-bottom:6px">★ 新記録！</div>
+        <div id="go-ranking" style="width:250px;margin:6px 0 4px;display:flex;flex-direction:column;gap:2px"></div>
+        <div style="display:flex;gap:10px;margin-top:14px">
+          <button class="btn btn-primary" id="go-restart">↺ 最初から</button>
+          <button class="btn btn-ghost" id="go-quit">✕ やめる</button>
+        </div>
+      </div>
     </section>
   </main>
 </div>
@@ -434,7 +448,7 @@ function drawTiles(){tx.clearRect(0,0,tc.width,tc.height);
       const cy=TL.y0+r*h+(up?h*2/3:h/3);
       drawTilePoly(tx,cx,cy,R,cellAngle(g),up?1:-1);
     }}
-  if(GAME&&GAME.state==='playing')drawGameObject();}
+  if(GAME&&(GAME.state==='playing'||GAME.state==='dying'))drawGameObject();}
 function animateTile(g){if(g.target===null)return;animating=true;
   const start=performance.now(),dur=240;
   function frame(now){const k=Math.min(1,(now-start)/dur);g.anim=1-Math.pow(1-k,3);drawTiles();
@@ -460,7 +474,7 @@ function hitTile(x,y){const n=TL.n;
       const cy=TL.y0+r*h+(up?h*2/3:h/3);
       const d=Math.hypot(cx-x,cy-y);if(d<bd){bd=d;best=idx;}idx++;
     }return best;}}
-tc.addEventListener('click',e=>{if(!TILE||animating)return;
+tc.addEventListener('click',e=>{if(!TILE||animating||GAME.state==='dying'||GAME.state==='gameover')return;
   const r=tc.getBoundingClientRect();const x=e.clientX-r.left,y=e.clientY-r.top;
   const id=hitTile(x,y);if(id===null||!grid[id])return;
   const steps=TILE.n===4?4:TILE.n===6?6:3;
@@ -562,7 +576,8 @@ function findEntryByWorldPos(wx,wy,excludeIdx){
 
 const GAME={state:'idle',tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,rafId:null,
   lookahead:null,stepsToFreeze:Infinity,timerFrozen:false,frozenTime:0,
-  loopSpeedMult:1,rotatedDuringLoop:new Set(),loopExtraElapsed:0};
+  loopSpeedMult:1,rotatedDuringLoop:new Set(),loopExtraElapsed:0,
+  dyingProgress:0,finalTime:0,finalSpeed:0};
 const G_BASE=0.55,G_A=0.0035;
 function gameSpeed(t){return G_BASE*Math.exp(G_A*(t+GAME.loopExtraElapsed));}
 
@@ -601,8 +616,62 @@ function stopGame(){
   if(GAME.rafId){cancelAnimationFrame(GAME.rafId);GAME.rafId=null;}
   GAME.lookahead=null;GAME.stepsToFreeze=Infinity;GAME.timerFrozen=false;GAME.frozenTime=0;
   GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
+  document.getElementById('gameover').style.display='none';
   setGameState('idle');
   drawTiles();}
+
+function startDying(){
+  if(GAME.state==='dying')return;
+  if(GAME.rafId){cancelAnimationFrame(GAME.rafId);GAME.rafId=null;}
+  // タイル回転アニメを中断して確定
+  grid.forEach(g=>{if(g.target!==null){g.rot=g.target;g.target=null;g.anim=0;}});
+  animating=false;
+  GAME.finalTime=GAME.timerFrozen?GAME.frozenTime:GAME.elapsed;
+  GAME.finalSpeed=gameSpeed(GAME.elapsed);
+  GAME.dyingProgress=0;
+  GAME.state='dying';
+  const startT=performance.now(),dur=1400;
+  function deathFrame(now){
+    GAME.dyingProgress=Math.min(1,(now-startT)/dur);
+    drawTiles();
+    if(GAME.dyingProgress<1)requestAnimationFrame(deathFrame);
+    else showGameOver();}
+  requestAnimationFrame(deathFrame);}
+
+function showGameOver(){
+  const key='truchet-rankings';
+  let records=JSON.parse(localStorage.getItem(key)||'[]');
+  const newRecord={time:GAME.finalTime,speed:GAME.finalSpeed,n:TILE.n,date:Date.now()};
+  records.push(newRecord);
+  records.sort((a,b)=>b.time-a.time);
+  const newRank=records.indexOf(newRecord);
+  records=records.slice(0,10);
+  localStorage.setItem(key,JSON.stringify(records));
+  // タイルサムネイル描画
+  const goCanvas=document.getElementById('gocanvas');
+  const goCtx=goCanvas.getContext('2d');
+  goCanvas.width=100;goCanvas.height=100;
+  drawTilePoly(goCtx,50,50,40,0,1);
+  document.getElementById('go-time').textContent=formatTimer(GAME.finalTime);
+  document.getElementById('go-speed').textContent='速度 '+GAME.finalSpeed.toFixed(2)+'×';
+  const newEl=document.getElementById('go-newrecord');
+  newEl.style.display=(newRank<10)?'':'none';
+  const rankEl=document.getElementById('go-ranking');
+  rankEl.innerHTML='';
+  records.forEach((rec,i)=>{
+    const isNew=(newRank<10&&i===newRank);
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;gap:8px;align-items:center;padding:4px 10px;border-radius:8px;font-size:13px;'+(isNew?'background:rgba(122,92,255,.25);transform:translateX(-24px);opacity:0;transition:transform .5s '+(i*0.07)+'s, opacity .5s '+(i*0.07)+'s':'');
+    row.innerHTML='<span style="color:var(--gold);font-weight:700;width:22px;text-align:right">'+(i+1)+'</span><span style="flex:1;font-family:\'Major Mono Display\',monospace">'+formatTimer(rec.time)+'</span><span style="opacity:.6">'+rec.speed.toFixed(2)+'×</span>';
+    rankEl.appendChild(row);
+    if(isNew)requestAnimationFrame(()=>requestAnimationFrame(()=>{row.style.transform='translateX(0)';row.style.opacity='1';}));});
+  document.getElementById('gameover').style.display='flex';
+  GAME.state='gameover';
+  // ツールバーUIを整理
+  document.getElementById('startgame').style.display='none';
+  document.getElementById('gametimer').style.display='none';
+  document.getElementById('pausebtn').style.display='none';
+  document.getElementById('shuffle').style.display='none';}
 
 function pauseGame(){
   if(GAME.state!=='playing')return;
@@ -631,11 +700,11 @@ function gameLoop(now){
     const exitSide=GAME.u>1?'b':'a';
     const over=GAME.u>1?GAME.u-1:-GAME.u;
     const wp=getEndpointWorld(GAME.tileIdx,GAME.connIdx,exitSide);
-    if(!wp){GAME.u=exitSide==='b'?1:0;stopGame();return;}
+    if(!wp){GAME.u=exitSide==='b'?1:0;startDying();return;}
     const res=findEntryByWorldPos(wp.x,wp.y,GAME.tileIdx);
-    if(!res){GAME.u=exitSide==='b'?1:0;stopGame();return;}
+    if(!res){GAME.u=exitSide==='b'?1:0;startDying();return;}
     // 終了条件B: 遷移先が回転中
-    if(grid[res.tileIdx].target!==null){GAME.u=exitSide==='b'?1:0;stopGame();return;}
+    if(grid[res.tileIdx].target!==null){GAME.u=exitSide==='b'?1:0;startDying();return;}
     GAME.tileIdx=res.tileIdx;GAME.connIdx=res.connIdx;
     if(res.side==='a'){GAME.u=Math.min(over,0.99);GAME.dir=1;}
     else{GAME.u=Math.max(1-over,0.01);GAME.dir=-1;}
@@ -696,10 +765,20 @@ function drawGameObject(){
   const wp=localToWorldAny(pt.x,pt.y,ti);
   const cos=Math.cos(ti.angle),sin=Math.sin(ti.angle);
   const tdx=(pt.dx*cos-pt.dy*sin)*GAME.dir,tdy=ti.triDir*(pt.dx*sin+pt.dy*cos)*GAME.dir;
-  const sz=TILE.width*ti.R*2.0;
-  drawHighlight();
+  const baseSz=TILE.width*ti.R*2.0;
+  let sz=baseSz,alpha=1;
+  if(GAME.state==='dying'){
+    const p=GAME.dyingProgress;
+    // 最初の30%で2倍に膨らみ、残り70%でゼロに縮む
+    if(p<0.3){sz=baseSz*(1+p/0.3);}
+    else{sz=baseSz*2*(1-(p-0.3)/0.7);}
+    alpha=Math.max(0,1-p);
+    if(sz<=0.5)return;
+  } else {
+    drawHighlight();}
   tx.save();
   tx.translate(wp.x,wp.y);tx.rotate(Math.atan2(tdy,tdx)+Math.PI/2);
+  tx.globalAlpha=alpha;
   tx.beginPath();tx.moveTo(0,-sz);tx.lineTo(sz*0.55,sz*0.65);tx.lineTo(-sz*0.55,sz*0.65);tx.closePath();
   tx.fillStyle='rgba(220,55,55,0.95)';
   tx.shadowColor='rgba(255,100,60,0.9)';tx.shadowBlur=sz*1.8;
@@ -745,6 +824,8 @@ document.getElementById('pausebtn').addEventListener('click',pauseGame);
 document.getElementById('pm-resume').addEventListener('click',resumeGame);
 document.getElementById('pm-restart').addEventListener('click',()=>{stopGame();startGame();});
 document.getElementById('pm-quit').addEventListener('click',()=>{stopGame();switchScreen('design');});
+document.getElementById('go-restart').addEventListener('click',()=>{stopGame();startGame();});
+document.getElementById('go-quit').addEventListener('click',()=>{stopGame();switchScreen('design');});
 
 // ブラウザバック → 強制終了・記録なし
 window.addEventListener('popstate',()=>{if(GAME.state!=='idle')stopGame();});
