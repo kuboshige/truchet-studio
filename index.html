@@ -371,20 +371,25 @@ function bezierArcLen(conn){
     len+=Math.hypot(pt.x-prev.x,pt.y-prev.y);prev=pt;}
   return len;}
 
-function buildSnapshot(){if(GAME&&GAME.state!=='idle')stopGame();TILE={n:S.n,width:(+document.getElementById('width').value)/(DV.R),road:COLOR.road,bg:COLOR.bg,
+function buildSnapshot(){if(GAME&&GAME.state!=='idle')stopGame();if(GAME)GAME.startIdx=0;TILE={n:S.n,width:(+document.getElementById('width').value)/(DV.R),road:COLOR.road,bg:COLOR.bg,
   conns:S.conns.map(c=>{const a=find(c[0]),b=find(c[1]);
     const w=c[2]?{ux:c[2].ux/DV.R, uy:c[2].uy/DV.R}:null;
     return{a:{edge:a.edge,t:a.t},b:{edge:b.edge,t:b.t},warp:w};})};
   TILE.conns.forEach((c,i)=>{
     c.len=bezierArcLen(c);
-    // u=0.5の位置が他の道と視覚的に重なっていないか判定（アイテムスポーン制限用）
-    const mid=evalTileConn(c,0.5);
-    c.midClear=!TILE.conns.some((c2,j)=>{
-      if(j===i)return false;
-      for(const u of[0.3,0.4,0.5,0.6,0.7]){
-        const p2=evalTileConn(c2,u);
-        if(Math.hypot(mid.x-p2.x,mid.y-p2.y)<TILE.width*2)return true;}
-      return false;});});
+    // アイテムを置く最も他の道から離れた位置(itemU)を計算
+    // どの道にも必ず候補が存在するよう、常に最善点を選ぶ
+    let bestU=0.5,bestDist=-1;
+    for(const u of[0.15,0.25,0.35,0.5,0.65,0.75,0.85]){
+      const pt=evalTileConn(c,u);
+      let minD=Infinity;
+      TILE.conns.forEach((c2,j)=>{
+        if(j===i)return;
+        for(const u2 of[0.2,0.35,0.5,0.65,0.8]){
+          const p2=evalTileConn(c2,u2);
+          minD=Math.min(minD,Math.hypot(pt.x-p2.x,pt.y-p2.y));}});
+      if(minD>bestDist){bestDist=minD;bestU=u;}}
+    c.itemU=bestU;});
   document.getElementById('startgame').style.display='';}
 const tc=document.getElementById('tcanvas'),tx=tc.getContext('2d');
 let grid=[];let animating=false;let TL={};
@@ -512,7 +517,7 @@ function switchScreen(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.screen===name));
   document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===name));
   if(name==='design'){if(GAME.state!=='idle')stopGame();fitDesign();}
-  if(name==='tile'){if(!TILE)buildSnapshot();layoutTile();if(!grid.length)makeGrid();fitTile();}}
+  if(name==='tile'){if(!TILE)buildSnapshot();fitTile();if(!grid.length)makeGrid();drawTiles();}}
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   if(t.dataset.screen==='design'&&GAME.state!=='idle'){
     if(GAME.state==='playing')pauseGame();
@@ -607,11 +612,11 @@ const GAME={state:'idle',tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,ra
   lookahead:null,stepsToFreeze:Infinity,timerFrozen:false,frozenTime:0,
   loopSpeedMult:1,rotatedDuringLoop:new Set(),loopExtraElapsed:0,
   dyingProgress:0,finalTime:0,finalSpeed:0,
-  highlightCells:10,speedPenalty:0};
+  highlightCells:10,speedPenalty:0,startIdx:0};
 let items=[]; // [{tileIdx,connIdx,type:'extend'|'slow',born:ms}]
 const G_BASE=0.55,G_A=0.0035;
-const SPEED_PENALTY_DELTA=0.08; // 調整項目: スロー1個あたりの速度ベース減少量
-const HL_DECAY=1/120;           // 調整項目: 光セル数/秒 (120s で1セル減)
+const HL_DECAY=1/20;            // 調整項目: 光セル数/秒 (20s で1セル減)
+const HL_MIN=3;                 // 調整項目: 光の最小セル数
 const ITEM_SLOW_RATIO=0.2;      // 調整項目: スローアイテム出現比率
 function gameSpeed(t){return Math.max(0.1,(G_BASE-GAME.speedPenalty)*Math.exp(G_A*(t+GAME.loopExtraElapsed)));}
 
@@ -641,7 +646,14 @@ function centerTileIdx(){
 
 function startGame(){
   if(!TILE||!TILE.conns.length)return;
-  GAME.tileIdx=centerTileIdx();GAME.connIdx=0;GAME.u=0.001;GAME.dir=1;
+  GAME.tileIdx=centerTileIdx();
+  // スタート道をローテーション（a→b, b→a を交互に全接続巡回）
+  const totalEp=TILE.conns.length*2;
+  const ep=GAME.startIdx%totalEp;
+  GAME.startIdx=(GAME.startIdx+1)%totalEp;
+  GAME.connIdx=Math.floor(ep/2);
+  GAME.dir=ep%2===0?1:-1;
+  GAME.u=GAME.dir===1?0.001:0.999;
   GAME.elapsed=0;GAME.lastTime=performance.now();
   GAME.timerFrozen=false;GAME.frozenTime=0;GAME.stepsToFreeze=Infinity;
   GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
@@ -800,7 +812,7 @@ function gameLoop(now){
   if(GAME.timerFrozen)GAME.loopExtraElapsed+=dt*2;
   if(!GAME.timerFrozen){
     document.getElementById('gametimer').textContent=formatTimer(GAME.elapsed);
-    GAME.highlightCells=Math.max(1,GAME.highlightCells-HL_DECAY*dt);}
+    GAME.highlightCells=Math.max(HL_MIN,GAME.highlightCells-HL_DECAY*dt);}
   const _conn=TILE.conns[GAME.connIdx];
   GAME.u+=gameSpeed(GAME.elapsed)*dt*GAME.dir/(_conn&&_conn.len||1);
 
@@ -827,8 +839,8 @@ function gameLoop(now){
         el.textContent=formatTimer(GAME.frozenTime);el.style.opacity='0.4';}}
     // 回転済みタイルに乗ったら先読み再チェック（ループ脱出判定）
     if(GAME.timerFrozen&&GAME.rotatedDuringLoop.has(GAME.tileIdx)){
-      // 回転済みタイルに到達 → 無条件でタイマー再開（新ループでも一旦解除）
-      GAME.timerFrozen=false;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
+      // 回転済みタイルに到達 → 無条件でタイマー再開（速度は維持）
+      GAME.timerFrozen=false;GAME.rotatedDuringLoop.clear();
       const el=document.getElementById('gametimer');if(el)el.style.opacity='1';
       // 新しいループ検出をリスタート
       GAME.lookahead=runLookahead();applyLookahead();}}
@@ -838,14 +850,19 @@ function gameLoop(now){
     const it=items[i];
     if(it.tileIdx===GAME.tileIdx&&it.connIdx===GAME.connIdx){
       if(it.type==='extend'){GAME.highlightCells=10;}
-      else{GAME.speedPenalty+=SPEED_PENALTY_DELTA;}
+      else{
+        // 「現在速度と初速の平均」になるようペナルティ計算
+        const sCur=gameSpeed(GAME.elapsed);
+        const sTarget=(sCur+G_BASE)/2;
+        const tEff=GAME.elapsed+GAME.loopExtraElapsed;
+        GAME.speedPenalty=Math.max(0,G_BASE-sTarget/Math.exp(G_A*tEff));}
       items.splice(i,1);}}
   try{drawTiles();}catch(e){console.error('drawTiles error',e);}
   GAME.rafId=requestAnimationFrame(gameLoop);}
 
 function drawHighlight(){
   if(!TILE)return;
-  const MAX_CELLS=Math.max(1,Math.round(GAME.highlightCells)),SAMP=16;
+  const MAX_CELLS=Math.max(HL_MIN,Math.round(GAME.highlightCells)),SAMP=16;
   const pts=[];
   let ti=GAME.tileIdx,ci=GAME.connIdx,d=GAME.dir;
   for(let cellI=0;cellI<MAX_CELLS;cellI++){
@@ -934,7 +951,7 @@ function drawItems(){
     else if(age>60&&age<=70&&Math.floor(now/400)%2===0)return;
     const ti=getTileInfoAny(it.tileIdx);if(!ti)return;
     const conn=TILE.conns[it.connIdx];if(!conn)return;
-    const pt=evalTileConn(conn,0.5);
+    const pt=evalTileConn(conn,conn.itemU||0.5);
     const wp=localToWorldAny(pt.x,pt.y,ti);
     const sz=tileR()*0.22;
     tx.save();tx.translate(wp.x,wp.y);
@@ -959,7 +976,6 @@ function trySpawnItem(){
     for(let ci=0;ci<TILE.conns.length;ci++){
       if(usedSet.has(`${ti},${ci}`))continue;
       if(items.some(it=>it.tileIdx===ti&&it.connIdx===ci))continue;
-      if(!TILE.conns[ci].midClear)continue; // 他の道と重なる位置は除外
       cands.push({ti,ci});}}
   if(!cands.length)return;
   const {ti,ci}=cands[Math.floor(Math.random()*cands.length)];
@@ -995,7 +1011,7 @@ function applyLookahead(){
   }else{
     // デッドエンド or オープン → ループ脱出: タイマー再開・速度倍率リセット
     GAME.timerFrozen=false;GAME.stepsToFreeze=Infinity;
-    GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
+    GAME.loopSpeedMult=1;GAME.rotatedDuringLoop.clear(); // loopExtraElapsedは保持（速度維持）
     const el=document.getElementById('gametimer');
     if(el)el.style.opacity='1';}}
 
