@@ -450,6 +450,7 @@ function drawTiles(){tx.clearRect(0,0,tc.width,tc.height);
       const cy=TL.y0+r*h+(up?h*2/3:h/3);
       drawTilePoly(tx,cx,cy,R,cellAngle(g),up?1:-1);
     }}
+  if(GAME&&(GAME.state==='playing'||GAME.state==='dying'))drawItems();
   if(GAME&&(GAME.state==='playing'||GAME.state==='dying'||GAME.state==='countdown'))drawGameObject();
   if(GAME&&GAME.state==='countdown')drawCountdown();}
 function animateTile(g){if(g.target===null)return;animating=true;
@@ -458,12 +459,15 @@ function animateTile(g){if(g.target===null)return;animating=true;
     if(k<1)requestAnimationFrame(frame);
     else{g.rot=g.target;g.target=null;g.anim=0;animating=false;drawTiles();
       if(GAME.state==='playing'){
+        const idx=grid.indexOf(g);
         if(GAME.timerFrozen){
-          // フリーズ中: タイマー状態は変えず、回転タイルを記録してlookaheadデータだけ更新
-          const idx=grid.indexOf(g);if(idx>=0)GAME.rotatedDuringLoop.add(idx);
-          GAME.lookahead=runLookahead(); // applyLookaheadは呼ばない（即再開させない）
+          if(idx>=0)GAME.rotatedDuringLoop.add(idx);
+          GAME.lookahead=runLookahead();
         }else{
-          GAME.lookahead=runLookahead();applyLookahead();}}}}
+          GAME.lookahead=runLookahead();applyLookahead();}
+        // 自機乗車タイルを回したとき、速度依存確率でアイテム出現
+        if(idx===GAME.tileIdx&&items.length<3)trySpawnItem();}}}
+
   requestAnimationFrame(frame);}
 function hitTile(x,y){const n=TL.n;
   if(TILE.n===4){const j=Math.floor((x-TL.x0)/TL.cell),i=Math.floor((y-TL.y0)/TL.cell);
@@ -580,9 +584,14 @@ function findEntryByWorldPos(wx,wy,excludeIdx){
 const GAME={state:'idle',tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,rafId:null,
   lookahead:null,stepsToFreeze:Infinity,timerFrozen:false,frozenTime:0,
   loopSpeedMult:1,rotatedDuringLoop:new Set(),loopExtraElapsed:0,
-  dyingProgress:0,finalTime:0,finalSpeed:0};
+  dyingProgress:0,finalTime:0,finalSpeed:0,
+  highlightCells:10,speedPenalty:0};
+let items=[]; // [{tileIdx,connIdx,type:'extend'|'slow',born:ms}]
 const G_BASE=0.55,G_A=0.0035;
-function gameSpeed(t){return G_BASE*Math.exp(G_A*(t+GAME.loopExtraElapsed));}
+const SPEED_PENALTY_DELTA=0.08; // 調整項目: スロー1個あたりの速度ベース減少量
+const HL_DECAY=1/120;           // 調整項目: 光セル数/秒 (120s で1セル減)
+const ITEM_SLOW_RATIO=0.2;      // 調整項目: スローアイテム出現比率
+function gameSpeed(t){return Math.max(0.1,(G_BASE-GAME.speedPenalty)*Math.exp(G_A*(t+GAME.loopExtraElapsed)));}
 
 function formatTimer(e){
   const cs=Math.floor(e*100)%100,s=Math.floor(e)%60,m=Math.floor(e/60);
@@ -614,6 +623,7 @@ function startGame(){
   GAME.elapsed=0;GAME.lastTime=performance.now();
   GAME.timerFrozen=false;GAME.frozenTime=0;GAME.stepsToFreeze=Infinity;
   GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
+  GAME.highlightCells=10;GAME.speedPenalty=0;items=[];
   document.getElementById('gametimer').style.opacity='1';
   document.getElementById('gameover').style.display='none';
   GAME.lookahead=runLookahead();applyLookahead();
@@ -664,6 +674,7 @@ function stopGame(){
   if(GAME.rafId){cancelAnimationFrame(GAME.rafId);GAME.rafId=null;}
   GAME.lookahead=null;GAME.stepsToFreeze=Infinity;GAME.timerFrozen=false;GAME.frozenTime=0;
   GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
+  GAME.highlightCells=10;GAME.speedPenalty=0;items=[];
   grid.forEach(g=>{g.frozenAngle=undefined;});
   document.getElementById('gameover').style.display='none';
   setGameState('idle');
@@ -764,9 +775,10 @@ function gameLoop(now){
   if(GAME.state!=='playing')return;
   const dt=Math.min((now-GAME.lastTime)/1000,0.1);
   GAME.lastTime=now;GAME.elapsed+=dt;
-  if(GAME.timerFrozen)GAME.loopExtraElapsed+=dt*2; // ループ中は加速度3倍
-  if(!GAME.timerFrozen)
+  if(GAME.timerFrozen)GAME.loopExtraElapsed+=dt*2;
+  if(!GAME.timerFrozen){
     document.getElementById('gametimer').textContent=formatTimer(GAME.elapsed);
+    GAME.highlightCells=Math.max(1,GAME.highlightCells-HL_DECAY*dt);}
   const _conn=TILE.conns[GAME.connIdx];
   GAME.u+=gameSpeed(GAME.elapsed)*dt*GAME.dir/(_conn&&_conn.len||1);
 
@@ -799,12 +811,28 @@ function gameLoop(now){
       // 新しいループ検出をリスタート
       GAME.lookahead=runLookahead();applyLookahead();}}
 
+  // アイテム取得チェック（自機重心とアイテム位置の距離）
+  if(items.length){
+    const carTi=getTileInfoAny(GAME.tileIdx);
+    if(carTi){
+      const carPt=evalTileConn(TILE.conns[GAME.connIdx],Math.max(0.001,Math.min(0.999,GAME.u)));
+      const carWp=localToWorldAny(carPt.x,carPt.y,carTi);
+      const thr=tileR()*0.38;
+      for(let i=items.length-1;i>=0;i--){
+        const it=items[i];
+        const itTi=getTileInfoAny(it.tileIdx);if(!itTi)continue;
+        const itPt=evalTileConn(TILE.conns[it.connIdx],0.5);
+        const itWp=localToWorldAny(itPt.x,itPt.y,itTi);
+        if(Math.hypot(carWp.x-itWp.x,carWp.y-itWp.y)<thr){
+          if(it.type==='extend'){GAME.highlightCells=10;}
+          else{GAME.speedPenalty+=SPEED_PENALTY_DELTA;}
+          items.splice(i,1);}}}}
   try{drawTiles();}catch(e){console.error('drawTiles error',e);}
   GAME.rafId=requestAnimationFrame(gameLoop);}
 
 function drawHighlight(){
   if(!TILE)return;
-  const MAX_CELLS=10,SAMP=16;
+  const MAX_CELLS=Math.max(1,Math.round(GAME.highlightCells)),SAMP=16;
   const pts=[];
   let ti=GAME.tileIdx,ci=GAME.connIdx,d=GAME.dir;
   for(let cellI=0;cellI<MAX_CELLS;cellI++){
@@ -859,6 +887,69 @@ function drawGameObject(){
   tx.fillStyle='rgba(220,55,55,0.95)';
   tx.shadowColor='rgba(255,100,60,0.9)';tx.shadowBlur=sz*1.8;
   tx.fill();tx.restore();}
+
+// ===== アイテムシステム =====
+
+// 金色の星を描く（光延長アイテム）
+function drawStar(ctx,cx,cy,outer,inner,pts){
+  ctx.beginPath();
+  for(let i=0;i<pts*2;i++){
+    const r=i%2===0?outer:inner,a=Math.PI*i/pts-Math.PI/2;
+    i===0?ctx.moveTo(cx+r*Math.cos(a),cy+r*Math.sin(a)):ctx.lineTo(cx+r*Math.cos(a),cy+r*Math.sin(a));}
+  ctx.closePath();ctx.fill();}
+
+// 赤い八角形＋下矢印（速度低下アイテム）
+function drawSlowIcon(ctx,cx,cy,sz){
+  ctx.beginPath();
+  for(let i=0;i<8;i++){const a=i*Math.PI/4+Math.PI/8;ctx.lineTo(cx+sz*Math.cos(a),cy+sz*Math.sin(a));}
+  ctx.closePath();ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.88)';
+  ctx.beginPath();
+  ctx.moveTo(cx-sz*0.22,cy-sz*0.4);ctx.lineTo(cx+sz*0.22,cy-sz*0.4);
+  ctx.lineTo(cx+sz*0.22,cy+sz*0.05);ctx.lineTo(cx+sz*0.42,cy+sz*0.05);
+  ctx.lineTo(cx,cy+sz*0.55);ctx.lineTo(cx-sz*0.42,cy+sz*0.05);
+  ctx.lineTo(cx-sz*0.22,cy+sz*0.05);ctx.closePath();ctx.fill();}
+
+// アイテムを描画し、期限切れを除去
+function drawItems(){
+  if(!items.length||!TILE)return;
+  const now=performance.now();
+  items=items.filter(it=>(now-it.born)/1000<75);
+  items.forEach(it=>{
+    const age=(now-it.born)/1000;
+    if(age>70&&Math.floor(now/80)%2===0)return;
+    else if(age>60&&age<=70&&Math.floor(now/400)%2===0)return;
+    const ti=getTileInfoAny(it.tileIdx);if(!ti)return;
+    const conn=TILE.conns[it.connIdx];if(!conn)return;
+    const pt=evalTileConn(conn,0.5);
+    const wp=localToWorldAny(pt.x,pt.y,ti);
+    const sz=tileR()*0.22;
+    tx.save();tx.translate(wp.x,wp.y);
+    if(it.type==='extend'){
+      tx.shadowColor='rgba(255,220,80,.95)';tx.shadowBlur=sz*2.5;
+      tx.fillStyle='#ffce5c';drawStar(tx,0,0,sz,sz*0.42,5);
+    }else{
+      tx.shadowColor='rgba(255,50,50,.95)';tx.shadowBlur=sz*2.5;
+      tx.fillStyle='#ff3333';drawSlowIcon(tx,0,0,sz);}
+    tx.restore();});}
+
+// 出現条件を満たすランダムな道にアイテムをスポーン
+function trySpawnItem(){
+  if(!TILE||!GAME.lookahead)return;
+  const speed=gameSpeed(GAME.elapsed);
+  const prob=Math.min(0.85,0.05+(speed-G_BASE*0.5)/G_BASE);
+  if(Math.random()>prob)return;
+  const usedSet=new Set();
+  (GAME.lookahead.path||[]).forEach(p=>usedSet.add(`${p.ti},${p.ci}`));
+  const cands=[];
+  for(let ti=0;ti<grid.length;ti++){
+    for(let ci=0;ci<TILE.conns.length;ci++){
+      if(usedSet.has(`${ti},${ci}`))continue;
+      if(items.some(it=>it.tileIdx===ti&&it.connIdx===ci))continue;
+      cands.push({ti,ci});}}
+  if(!cands.length)return;
+  const {ti,ci}=cands[Math.floor(Math.random()*cands.length)];
+  items.push({tileIdx:ti,connIdx:ci,type:Math.random()<ITEM_SLOW_RATIO?'slow':'extend',born:performance.now()});}
 
 // 先読みアルゴリズム: 現在位置から前方を辿りループ or デッドエンドを確定する。
 // ノード = (tileIdx, connIdx, dir)。同ノードの再訪問 → ループ。
