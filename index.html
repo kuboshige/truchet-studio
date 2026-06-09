@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Truchet Tile Studio</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&family=Major+Mono+Display&display=swap');
@@ -11,24 +11,27 @@
     --accent:#ff5c8a; --gold:#ffce5c; --grid:#3a3450;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+  html,body{margin:0;height:100%;height:100dvh;background:var(--bg);color:var(--ink);
     font-family:'Zen Maru Gothic',sans-serif;overflow:hidden;overscroll-behavior:none;
     background-image:radial-gradient(circle at 20% 10%,#2a2440 0,transparent 55%),
                      radial-gradient(circle at 80% 90%,#271d33 0,transparent 50%);}
-  #app{display:flex;flex-direction:column;height:100%;}
-  header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--grid);flex-wrap:wrap;}
+  #app{display:flex;flex-direction:column;height:100%;height:100dvh;
+    padding-bottom:env(safe-area-inset-bottom,0);padding-top:env(safe-area-inset-top,0);}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--grid);flex-wrap:wrap;flex-shrink:0;
+    padding-left:max(16px,env(safe-area-inset-left,0));padding-right:max(16px,env(safe-area-inset-right,0));}
   header h1{font-family:'Major Mono Display',monospace;font-size:14px;letter-spacing:1px;margin:0;color:var(--line);font-weight:400;}
   .tabs{margin-left:auto;display:flex;gap:6px;}
   .tab{border:1px solid var(--grid);background:transparent;color:var(--ink);padding:6px 14px;
     border-radius:20px;font-family:inherit;font-size:13px;cursor:pointer;transition:all .2s;font-weight:700;}
   .tab.active{background:var(--line);color:#14121a;border-color:var(--line);}
-  main{flex:1;position:relative;overflow:hidden;}
+  main{flex:1;position:relative;overflow:hidden;min-height:0;}
   .screen{position:absolute;inset:0;display:none;flex-direction:column;}
   .screen.active{display:flex;}
-  .stage{flex:1;display:flex;align-items:center;justify-content:center;touch-action:none;}
+  .stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;touch-action:none;}
   canvas{display:block;touch-action:none;}
-  .toolbar{display:flex;align-items:center;gap:14px;padding:12px 18px;background:var(--panel);
-    border-top:1px solid var(--grid);flex-wrap:wrap;}
+  .toolbar{display:flex;align-items:center;gap:14px;padding:10px 18px;background:var(--panel);
+    border-top:1px solid var(--grid);flex-wrap:wrap;flex-shrink:0;
+    padding-left:max(18px,env(safe-area-inset-left,0));padding-right:max(18px,env(safe-area-inset-right,0));}
   .toolbar label{font-size:12px;opacity:.85;display:flex;align-items:center;gap:7px;}
   input[type=range]{accent-color:var(--accent);width:100px;}
   select{background:#2a2640;color:var(--ink);border:1px solid var(--grid);border-radius:8px;
@@ -46,6 +49,14 @@
   .pop.open{display:grid;}
   .pop .chip{width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent;}
   .pop .chip:hover{border-color:#fff;}
+  /* ランドスケープ（スマホ横持ち）対応 */
+  @media (max-height:480px){
+    header{padding:4px 16px;}
+    header h1{font-size:12px;}
+    .toolbar{padding:5px 18px;gap:8px;}
+    .hint{display:none;}}
+  /* ゲームオーバー画面スクロール */
+  #gameover{overflow-y:auto;-webkit-overflow-scrolling:touch;}
 </style>
 </head>
 <body>
@@ -92,7 +103,7 @@
         <button class="btn btn-ghost" id="pm-restart" style="width:140px">↺ 最初から</button>
         <button class="btn btn-ghost" id="pm-quit" style="width:140px">✕ やめる</button>
       </div>
-      <div id="gameover" style="position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:0;z-index:60;background:rgba(14,12,20,.92)">
+      <div id="gameover" style="position:absolute;inset:0;display:none;flex-direction:column;align-items:center;gap:0;z-index:60;background:rgba(14,12,20,.92);overflow-y:auto;-webkit-overflow-scrolling:touch;padding:24px 16px;">
         <p style="font-family:'Zen Maru Gothic',sans-serif;font-size:17px;font-weight:700;color:var(--accent);margin:0 0 14px;letter-spacing:2px">GAME OVER</p>
         <canvas id="gocanvas" width="100" height="100" style="border-radius:14px;border:1px solid rgba(122,92,255,.35)"></canvas>
         <div style="display:flex;gap:20px;align-items:baseline;margin:12px 0 2px">
@@ -364,7 +375,16 @@ function buildSnapshot(){if(GAME&&GAME.state!=='idle')stopGame();TILE={n:S.n,wid
   conns:S.conns.map(c=>{const a=find(c[0]),b=find(c[1]);
     const w=c[2]?{ux:c[2].ux/DV.R, uy:c[2].uy/DV.R}:null;
     return{a:{edge:a.edge,t:a.t},b:{edge:b.edge,t:b.t},warp:w};})};
-  TILE.conns.forEach(c=>{c.len=bezierArcLen(c);});
+  TILE.conns.forEach((c,i)=>{
+    c.len=bezierArcLen(c);
+    // u=0.5の位置が他の道と視覚的に重なっていないか判定（アイテムスポーン制限用）
+    const mid=evalTileConn(c,0.5);
+    c.midClear=!TILE.conns.some((c2,j)=>{
+      if(j===i)return false;
+      for(const u of[0.3,0.4,0.5,0.6,0.7]){
+        const p2=evalTileConn(c2,u);
+        if(Math.hypot(mid.x-p2.x,mid.y-p2.y)<TILE.width*2)return true;}
+      return false;});});
   document.getElementById('startgame').style.display='';}
 const tc=document.getElementById('tcanvas'),tx=tc.getContext('2d');
 let grid=[];let animating=false;let TL={};
@@ -499,7 +519,9 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
     return; // 一時停止メニュー経由でのみデザインへ戻れる
   }
   switchScreen(t.dataset.screen);}));
-window.addEventListener('resize',()=>{fitDesign();if(document.getElementById('tile').classList.contains('active'))fitTile();});
+function onResize(){fitDesign();if(document.getElementById('tile').classList.contains('active'))fitTile();}
+window.addEventListener('resize',onResize);
+if(window.visualViewport)window.visualViewport.addEventListener('resize',onResize);
 function seed(){S.n=4;ensureTValueAllEdges(0.5);
   const m=e=>S.points.find(p=>p.edge===e&&Math.abs(p.t-0.5)<0.01);
   S.conns.push([m(0).id,m(1).id]);S.conns.push([m(2).id,m(3).id]);}
@@ -811,22 +833,13 @@ function gameLoop(now){
       // 新しいループ検出をリスタート
       GAME.lookahead=runLookahead();applyLookahead();}}
 
-  // アイテム取得チェック（自機重心とアイテム位置の距離）
-  if(items.length){
-    const carTi=getTileInfoAny(GAME.tileIdx);
-    if(carTi){
-      const carPt=evalTileConn(TILE.conns[GAME.connIdx],Math.max(0.001,Math.min(0.999,GAME.u)));
-      const carWp=localToWorldAny(carPt.x,carPt.y,carTi);
-      const thr=tileR()*0.38;
-      for(let i=items.length-1;i>=0;i--){
-        const it=items[i];
-        const itTi=getTileInfoAny(it.tileIdx);if(!itTi)continue;
-        const itPt=evalTileConn(TILE.conns[it.connIdx],0.5);
-        const itWp=localToWorldAny(itPt.x,itPt.y,itTi);
-        if(Math.hypot(carWp.x-itWp.x,carWp.y-itWp.y)<thr){
-          if(it.type==='extend'){GAME.highlightCells=10;}
-          else{GAME.speedPenalty+=SPEED_PENALTY_DELTA;}
-          items.splice(i,1);}}}}
+  // アイテム取得チェック（同じ道を走ったとき取得）
+  for(let i=items.length-1;i>=0;i--){
+    const it=items[i];
+    if(it.tileIdx===GAME.tileIdx&&it.connIdx===GAME.connIdx){
+      if(it.type==='extend'){GAME.highlightCells=10;}
+      else{GAME.speedPenalty+=SPEED_PENALTY_DELTA;}
+      items.splice(i,1);}}
   try{drawTiles();}catch(e){console.error('drawTiles error',e);}
   GAME.rafId=requestAnimationFrame(gameLoop);}
 
@@ -929,8 +942,8 @@ function drawItems(){
       tx.shadowColor='rgba(255,220,80,.95)';tx.shadowBlur=sz*2.5;
       tx.fillStyle='#ffce5c';drawStar(tx,0,0,sz,sz*0.42,5);
     }else{
-      tx.shadowColor='rgba(255,50,50,.95)';tx.shadowBlur=sz*2.5;
-      tx.fillStyle='#ff3333';drawSlowIcon(tx,0,0,sz);}
+      tx.shadowColor='rgba(40,200,160,.95)';tx.shadowBlur=sz*2.5;
+      tx.fillStyle='#22ccaa';drawSlowIcon(tx,0,0,sz);}
     tx.restore();});}
 
 // 出現条件を満たすランダムな道にアイテムをスポーン
@@ -946,6 +959,7 @@ function trySpawnItem(){
     for(let ci=0;ci<TILE.conns.length;ci++){
       if(usedSet.has(`${ti},${ci}`))continue;
       if(items.some(it=>it.tileIdx===ti&&it.connIdx===ci))continue;
+      if(!TILE.conns[ci].midClear)continue; // 他の道と重なる位置は除外
       cands.push({ti,ci});}}
   if(!cands.length)return;
   const {ti,ci}=cands[Math.floor(Math.random()*cands.length)];
