@@ -100,7 +100,7 @@
           <span id="go-speed" style="font-size:13px;opacity:.65"></span>
         </div>
         <div id="go-newrecord" style="display:none;color:var(--gold);font-size:13px;font-weight:700;margin-bottom:6px">★ 新記録！</div>
-        <div id="go-ranking" style="width:250px;margin:6px 0 4px;display:flex;flex-direction:column;gap:2px"></div>
+        <div id="go-ranking" style="width:270px;margin:6px 0 4px;display:flex;flex-direction:column;gap:2px"></div>
         <div style="display:flex;gap:10px;margin-top:14px">
           <button class="btn btn-primary" id="go-restart">↺ 最初から</button>
           <button class="btn btn-ghost" id="go-quit">✕ やめる</button>
@@ -394,7 +394,7 @@ function makeGrid(){const n=+document.getElementById('gridn').value;
   const steps=TILE?(TILE.n===4?4:TILE.n===6?6:3):4;let count=n*n;
   if(TILE&&TILE.n===6)count=hexCells(n).length;
   if(TILE&&TILE.n===3){layoutTile();count=TL.rows*TL.cols;}
-  grid=Array.from({length:count},()=>({rot:Math.floor(Math.random()*steps),anim:0,target:null}));}
+  grid=Array.from({length:count},()=>({rot:Math.floor(Math.random()*steps),anim:0,target:null,frozenAngle:undefined}));}
 function hexCells(n){const cells=[];const half=Math.floor(n/2);
   for(let r=-half;r<=half;r++){for(let q=-half;q<=half;q++){if(Math.abs(q+r)<=half)cells.push({q,r});}}return cells;}
 function drawTilePoly(ctx,cx,cy,R,rotAngle,triDir){
@@ -428,7 +428,9 @@ function drawTilePoly(ctx,cx,cy,R,rotAngle,triDir){
   ctx.beginPath();verts.forEach((v,i)=>{const x=v.x*R,y=v.y*R;i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.closePath();ctx.stroke();
   ctx.restore();}
 function stepAngle(){return TILE.n===4?Math.PI/2:TILE.n===6?Math.PI/3:2*Math.PI/3;}
-function cellAngle(g){const base=g.rot*stepAngle();
+function cellAngle(g){
+  if(g.frozenAngle!==undefined)return g.frozenAngle;
+  const base=g.rot*stepAngle();
   if(g.target!==null){return base+stepAngle()*g.anim;}return base;}
 function drawTiles(){tx.clearRect(0,0,tc.width,tc.height);
   if(!TILE){tx.fillStyle=getCSS('--line');tx.font="16px 'Zen Maru Gothic'";tx.textAlign='center';
@@ -448,7 +450,7 @@ function drawTiles(){tx.clearRect(0,0,tc.width,tc.height);
       const cy=TL.y0+r*h+(up?h*2/3:h/3);
       drawTilePoly(tx,cx,cy,R,cellAngle(g),up?1:-1);
     }}
-  if(GAME&&(GAME.state==='playing'||GAME.state==='dying'))drawGameObject();
+  if(GAME&&(GAME.state==='playing'||GAME.state==='dying'||GAME.state==='countdown'))drawGameObject();
   if(GAME&&GAME.state==='countdown')drawCountdown();}
 function animateTile(g){if(g.target===null)return;animating=true;
   const start=performance.now(),dur=240;
@@ -614,6 +616,7 @@ function startGame(){
   GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
   document.getElementById('gametimer').style.opacity='1';
   document.getElementById('gameover').style.display='none';
+  GAME.lookahead=runLookahead();applyLookahead();
   setGameState('countdown');
   startCountdown();}
 
@@ -661,6 +664,7 @@ function stopGame(){
   if(GAME.rafId){cancelAnimationFrame(GAME.rafId);GAME.rafId=null;}
   GAME.lookahead=null;GAME.stepsToFreeze=Infinity;GAME.timerFrozen=false;GAME.frozenTime=0;
   GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
+  grid.forEach(g=>{g.frozenAngle=undefined;});
   document.getElementById('gameover').style.display='none';
   setGameState('idle');
   drawTiles();}
@@ -668,8 +672,8 @@ function stopGame(){
 function startDying(){
   if(GAME.state==='dying')return;
   if(GAME.rafId){cancelAnimationFrame(GAME.rafId);GAME.rafId=null;}
-  // タイル回転アニメを中断して確定
-  grid.forEach(g=>{if(g.target!==null){g.rot=g.target;g.target=null;g.anim=0;}});
+  // タイル回転を現在の中間角度で凍結（最終位置にスナップしない）
+  grid.forEach(g=>{if(g.target!==null){g.frozenAngle=cellAngle(g);g.target=null;g.anim=0;}});
   animating=false;
   GAME.finalTime=GAME.timerFrozen?GAME.frozenTime:GAME.elapsed;
   GAME.finalSpeed=gameSpeed(GAME.elapsed);
@@ -683,9 +687,16 @@ function startDying(){
     else showGameOver();}
   requestAnimationFrame(deathFrame);}
 
+function tileKey(t){
+  if(!t)return'';
+  return JSON.stringify({n:t.n,w:Math.round(t.width*1e4),road:t.road,bg:t.bg,
+    c:t.conns.map(c=>({a:[c.a.edge,Math.round(c.a.t*1e4)],b:[c.b.edge,Math.round(c.b.t*1e4)],
+      wp:c.warp?[Math.round(c.warp.ux*1e3),Math.round(c.warp.uy*1e3)]:null}))});}
+
 function renderTileMini(ctx,cx,cy,R,tileData){
   if(!tileData)return;
-  const saved=TILE;TILE=tileData;
+  const saved=TILE;
+  TILE={...tileData,width:tileData.width*0.45}; // ランキング表示用に道幅を細く
   drawTilePoly(ctx,cx,cy,R,0,1);
   TILE=saved;}
 
@@ -700,13 +711,17 @@ function showGameOver(){
   const newRank=records.indexOf(newRecord);
   records=records.slice(0,10);
   localStorage.setItem(key,JSON.stringify(records));
+  // 同じタイルの記録の中で1位なら新記録
+  const myKey=tileKey(tileSnap);
+  const sameTile=records.filter(r=>r.tile&&tileKey(r.tile)===myKey).sort((a,b)=>b.time-a.time);
+  const isNewTileRecord=sameTile.length>0&&sameTile[0]===newRecord;
   // 現タイルのサムネイル（大）
   const goCanvas=document.getElementById('gocanvas');
   goCanvas.width=100;goCanvas.height=100;
-  drawTilePoly(goCanvas.getContext('2d'),50,50,40,0,1);
+  renderTileMini(goCanvas.getContext('2d'),50,50,42,tileSnap);
   document.getElementById('go-time').textContent=formatTimer(GAME.finalTime);
   document.getElementById('go-speed').textContent='速度 '+GAME.finalSpeed.toFixed(2)+'×';
-  document.getElementById('go-newrecord').style.display=(newRank<10)?'':'none';
+  document.getElementById('go-newrecord').style.display=isNewTileRecord?'':'none';
   const rankEl=document.getElementById('go-ranking');
   rankEl.innerHTML='';
   records.forEach((rec,i)=>{
@@ -716,9 +731,9 @@ function showGameOver(){
     const numEl=document.createElement('span');
     numEl.style.cssText='color:var(--gold);font-weight:700;width:18px;text-align:right;font-size:12px;flex-shrink:0';
     numEl.textContent=i+1;
-    const mc=document.createElement('canvas');mc.width=30;mc.height=30;
-    mc.style.cssText='border-radius:5px;flex-shrink:0;';
-    renderTileMini(mc.getContext('2d'),15,15,12,rec.tile);
+    const mc=document.createElement('canvas');mc.width=40;mc.height=40;
+    mc.style.cssText='border-radius:6px;flex-shrink:0;';
+    renderTileMini(mc.getContext('2d'),20,20,16,rec.tile);
     const timeEl=document.createElement('span');
     timeEl.style.cssText="flex:1;font-family:'Major Mono Display',monospace;font-size:12px";
     timeEl.textContent=formatTimer(rec.time);
