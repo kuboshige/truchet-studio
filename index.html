@@ -57,6 +57,31 @@
     .hint{display:none;}}
   /* ゲームオーバー画面スクロール */
   #gameover{overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  /* 図鑑 */
+  .zukan-head{display:flex;gap:8px;padding:12px 16px;flex-shrink:0;border-bottom:1px solid var(--grid);}
+  .zukan-page{border:1px solid var(--grid);background:transparent;color:var(--ink);padding:7px 14px;
+    border-radius:20px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;}
+  .zukan-page.active{background:var(--line);color:#14121a;border-color:var(--line);}
+  .zukan-page span{opacity:.65;font-size:11px;margin-left:4px;}
+  .zukan-list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px;
+    display:flex;flex-wrap:wrap;gap:14px;align-content:flex-start;}
+  .zukan-card{background:var(--panel);border:1px solid var(--grid);border-radius:14px;padding:12px;
+    display:flex;flex-direction:column;align-items:center;gap:6px;width:128px;}
+  .zukan-card canvas{border-radius:10px;}
+  .zukan-card .zlabel{font-size:11px;opacity:.7;text-align:center;line-height:1.4;}
+  .zukan-card .zbadge{font-size:10px;padding:2px 8px;border-radius:12px;font-weight:700;}
+  .zbadge.mirror{background:#4a3a6e;color:#d8c8ff;}
+  .zbadge.self{background:#2c6e49;color:#d7ffe8;}
+  .zukan-pair{display:flex;align-items:center;gap:0;}
+  .zukan-pair .zlink{width:22px;height:2px;background:var(--line);opacity:.5;flex-shrink:0;}
+  .zukan-card.silhouette{opacity:.55;border-style:dashed;}
+  .zukan-empty{opacity:.6;font-size:13px;padding:30px;width:100%;text-align:center;}
+  /* トースト通知 */
+  #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%) translateY(20px);
+    background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:24px;
+    padding:10px 22px;font-size:13.5px;font-weight:700;opacity:0;pointer-events:none;
+    transition:opacity .3s,transform .3s;z-index:300;box-shadow:0 8px 30px #000a;white-space:nowrap;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 </style>
 </head>
 <body>
@@ -66,6 +91,8 @@
     <div class="tabs">
       <button class="tab active" data-screen="design">デザイン</button>
       <button class="tab" data-screen="tile">敷き詰め</button>
+      <button class="tab" data-screen="zukan">図鑑</button>
+      <button class="tab" id="settingsbtn" style="padding:6px 10px">⚙</button>
     </div>
   </header>
   <main>
@@ -95,6 +122,8 @@
         <button class="btn btn-primary" id="startgame" style="display:none">▶ スタート</button>
         <span id="gametimer" style="display:none;font-family:'Major Mono Display',monospace;font-size:15px;color:var(--line);letter-spacing:1px;min-width:90px;text-align:center">00:00.00</span>
         <button class="btn btn-ghost" id="pausebtn" style="display:none">⏸ 一時停止</button>
+        <button class="btn btn-ghost" id="btn-reverse" style="display:none;background:#4a3a6e;color:#d8c8ff">⇄ <span id="inv-reverse">0</span></button>
+        <button class="btn btn-ghost" id="btn-timestop" style="display:none;background:#1e4a5e;color:#aee8ff">⏱ <span id="inv-timestop">0</span></button>
         <span class="hint">タイルをタップで回転（四角90°/三角120°/六角60°）＋アニメ ／ どの向きでも道はつながる</span>
       </div>
       <div id="pausemenu" style="position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:50;background:rgba(20,18,26,.82)">
@@ -111,6 +140,7 @@
           <span id="go-speed" style="font-size:13px;opacity:.65"></span>
         </div>
         <div id="go-newrecord" style="display:none;color:var(--gold);font-size:13px;font-weight:700;margin-bottom:6px">★ 新記録！</div>
+        <div id="go-stats" style="display:flex;flex-wrap:wrap;gap:6px 16px;justify-content:center;width:280px;margin:4px 0;font-size:11.5px;opacity:.85"></div>
         <div id="go-ranking" style="width:270px;margin:6px 0 4px;display:flex;flex-direction:column;gap:2px"></div>
         <div style="display:flex;gap:10px;margin-top:14px">
           <button class="btn btn-primary" id="go-restart">↺ 最初から</button>
@@ -118,7 +148,23 @@
         </div>
       </div>
     </section>
+    <section class="screen" id="zukan">
+      <div class="zukan-head">
+        <button class="zukan-page active" data-shape="4">■ 四角形 <span id="zc4">0</span></button>
+        <button class="zukan-page" data-shape="6">⬢ 六角形 <span id="zc6">0</span></button>
+        <button class="zukan-page" data-shape="3">▲ 三角形 <span id="zc3">0</span></button>
+      </div>
+      <div class="zukan-list" id="zukanlist"></div>
+    </section>
   </main>
+</div>
+<div id="toast"></div>
+<div id="settingspop" style="position:fixed;right:12px;top:54px;background:var(--panel);border:1px solid var(--grid);
+  border-radius:14px;padding:16px 18px;display:none;flex-direction:column;gap:12px;z-index:250;box-shadow:0 8px 30px #000a">
+  <label style="font-size:12px;display:flex;align-items:center;gap:10px;justify-content:space-between">効果音
+    <input type="range" id="sevol" min="0" max="100" value="70"></label>
+  <label style="font-size:12px;display:flex;align-items:center;gap:10px;justify-content:space-between">BGM
+    <input type="range" id="bgmvol" min="0" max="100" value="35"></label>
 </div>
 <div class="pop" id="pop"></div>
 <script>
@@ -510,6 +556,7 @@ tc.addEventListener('click',e=>{if(!TILE||animating||GAME.state==='dying'||GAME.
   const r=tc.getBoundingClientRect();const x=e.clientX-r.left,y=e.clientY-r.top;
   const id=hitTile(x,y);if(id===null||!grid[id])return;
   const steps=TILE.n===4?4:TILE.n===6?6:3;
+  sfx('rotate');
   grid[id].target=(grid[id].rot+1)%steps;grid[id].anim=0;animateTile(grid[id]);});
 document.getElementById('shuffle').addEventListener('click',()=>{if(GAME.state!=='idle')stopGame();makeGrid();drawTiles();});
 document.getElementById('gridn').addEventListener('input',()=>{if(GAME.state!=='idle')stopGame();layoutTile();makeGrid();drawTiles();});
@@ -517,9 +564,10 @@ function switchScreen(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.screen===name));
   document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===name));
   if(name==='design'){if(GAME.state!=='idle')stopGame();fitDesign();}
-  if(name==='tile'){if(!TILE)buildSnapshot();fitTile();if(!grid.length)makeGrid();drawTiles();}}
+  if(name==='tile'){if(!TILE)buildSnapshot();fitTile();if(!grid.length)makeGrid();drawTiles();}
+  if(name==='zukan')renderZukan();}
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
-  if(t.dataset.screen==='design'&&GAME.state!=='idle'){
+  if(t.dataset.screen!=='tile'&&GAME.state!=='idle'){
     if(GAME.state==='playing')pauseGame();
     return; // 一時停止メニュー経由でのみデザインへ戻れる
   }
@@ -612,7 +660,11 @@ const GAME={state:'idle',tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,ra
   lookahead:null,stepsToFreeze:Infinity,timerFrozen:false,frozenTime:0,
   loopSpeedMult:1,rotatedDuringLoop:new Set(),loopExtraElapsed:0,
   dyingProgress:0,finalTime:0,finalSpeed:0,
-  highlightCells:10,speedPenalty:0,startIdx:0};
+  highlightCells:10,speedPenalty:0,startIdx:0,
+  stats:{items:0,maxSpeed:0,loopEscapes:0,visited:new Set()},
+  inv:{reverse:0,timestop:0},timeStopUntil:0};
+const INV_CAP=2;            // 3個目以降はリワード広告（リリース版で解放）
+const TIMESTOP_DUR=5000;    // 調整項目: タイムストップ持続(ms)
 let items=[]; // [{tileIdx,connIdx,type:'extend'|'slow',born:ms}]
 const G_BASE=0.55,G_A=0.0035;
 const HL_DECAY=1/20;            // 調整項目: 光セル数/秒 (20s で1セル減)
@@ -633,6 +685,8 @@ function setGameState(s){
   document.getElementById('shuffle').style.display=idle?'':'none';
   document.getElementById('pausebtn').style.display=playing?'':'none';
   document.getElementById('pausemenu').style.display=s==='paused'?'flex':'none';
+  if(typeof updateInvUI==='function')updateInvUI();
+  if(idle)document.getElementById('gametimer').style.color='';
   if(!idle){
     const el=document.getElementById('gametimer');
     el.textContent=formatTimer(GAME.timerFrozen?GAME.frozenTime:GAME.elapsed);
@@ -658,18 +712,25 @@ function startGame(){
   GAME.timerFrozen=false;GAME.frozenTime=0;GAME.stepsToFreeze=Infinity;
   GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
   GAME.highlightCells=10;GAME.speedPenalty=0;items=[];
+  GAME.stats={items:0,maxSpeed:0,loopEscapes:0,visited:new Set()};
+  GAME.stats.visited.add(GAME.tileIdx+','+GAME.connIdx);
+  GAME.inv={reverse:0,timestop:0};GAME.timeStopUntil=0;updateInvUI();
   document.getElementById('gametimer').style.opacity='1';
   document.getElementById('gameover').style.display='none';
   GAME.lookahead=runLookahead();applyLookahead();
+  registerDiscovery();
   setGameState('countdown');
   startCountdown();}
 
 function startCountdown(){
   GAME.countdownValue=0;
+  let lastCount=4;
   const startT=performance.now();
   function countFrame(now){
     if(GAME.state!=='countdown')return;
     GAME.countdownValue=Math.min((now-startT)/1000,3.7);
+    const c=3-Math.floor(GAME.countdownValue);
+    if(c<lastCount&&c>0){lastCount=c;sfx('count');}
     drawTiles();
     if(GAME.countdownValue<3.7)requestAnimationFrame(countFrame);
     else beginPlaying();}
@@ -678,6 +739,7 @@ function startCountdown(){
 function beginPlaying(){
   GAME.elapsed=0;GAME.lastTime=performance.now();
   GAME.lookahead=runLookahead();applyLookahead();
+  sfx('start');startBGM();
   setGameState('playing');
   GAME.lastTime=performance.now();
   GAME.rafId=requestAnimationFrame(gameLoop);}
@@ -705,6 +767,7 @@ function drawCountdown(){
 
 function stopGame(){
   if(GAME.state==='idle')return;
+  stopBGM();
   if(GAME.rafId){cancelAnimationFrame(GAME.rafId);GAME.rafId=null;}
   GAME.lookahead=null;GAME.stepsToFreeze=Infinity;GAME.timerFrozen=false;GAME.frozenTime=0;
   GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
@@ -717,6 +780,7 @@ function stopGame(){
 function startDying(){
   if(GAME.state==='dying')return;
   if(GAME.rafId){cancelAnimationFrame(GAME.rafId);GAME.rafId=null;}
+  sfx('over');stopBGM();
   // タイル回転を現在の中間角度で凍結（最終位置にスナップしない）
   grid.forEach(g=>{if(g.target!==null){g.frozenAngle=cellAngle(g);g.target=null;g.anim=0;}});
   animating=false;
@@ -746,11 +810,16 @@ function renderTileMini(ctx,cx,cy,R,tileData){
   TILE=saved;}
 
 function showGameOver(){
-  const key='truchet-rankings';
+  const gridN=+document.getElementById('gridn').value;
+  const key='truchet-rankings-g'+gridN; // グリッドサイズ別ランキング
   let records=JSON.parse(localStorage.getItem(key)||'[]').filter(r=>r.tile);
   const tileSnap={n:TILE.n,width:TILE.width,road:TILE.road,bg:TILE.bg,
     conns:TILE.conns.map(c=>({a:c.a,b:c.b,warp:c.warp||null}))};
-  const newRecord={time:GAME.finalTime,speed:GAME.finalSpeed,date:Date.now(),tile:tileSnap};
+  const st=GAME.stats;
+  const totalConns=grid.length*TILE.conns.length;
+  const coverage=totalConns?Math.round(st.visited.size/totalConns*100):0;
+  const newRecord={time:GAME.finalTime,speed:GAME.finalSpeed,date:Date.now(),tile:tileSnap,
+    items:st.items,coverage,maxSpeed:st.maxSpeed,loopEscapes:st.loopEscapes};
   records.push(newRecord);
   records.sort((a,b)=>b.time-a.time);
   const newRank=records.indexOf(newRecord);
@@ -767,6 +836,16 @@ function showGameOver(){
   document.getElementById('go-time').textContent=formatTimer(GAME.finalTime);
   document.getElementById('go-speed').textContent='速度 '+GAME.finalSpeed.toFixed(2)+'×';
   document.getElementById('go-newrecord').style.display=isNewTileRecord?'':'none';
+  if(isNewTileRecord)sfx('record');
+  // 5指標スコア表示
+  const statsEl=document.getElementById('go-stats');
+  statsEl.innerHTML='';
+  [['アイテム',st.items+'個'],['道カバー',coverage+'%'],
+   ['最高速度',st.maxSpeed.toFixed(2)+'×'],['ループ脱出',st.loopEscapes+'回'],
+   ['グリッド',gridN+'×'+gridN]].forEach(([k,v])=>{
+    const sp=document.createElement('span');
+    sp.innerHTML=k+' <b style="color:var(--line)">'+v+'</b>';
+    statsEl.appendChild(sp);});
   const rankEl=document.getElementById('go-ranking');
   rankEl.innerHTML='';
   records.forEach((rec,i)=>{
@@ -797,24 +876,33 @@ function showGameOver(){
 function pauseGame(){
   if(GAME.state!=='playing')return; // countdown中は一時停止不可
   if(GAME.rafId){cancelAnimationFrame(GAME.rafId);GAME.rafId=null;}
+  stopBGM();
   setGameState('paused');}
 
 function resumeGame(){
   if(GAME.state!=='paused')return;
   GAME.lastTime=performance.now();
+  startBGM();
   setGameState('playing');
   GAME.rafId=requestAnimationFrame(gameLoop);}
 
 function gameLoop(now){
   if(GAME.state!=='playing')return;
   const dt=Math.min((now-GAME.lastTime)/1000,0.1);
-  GAME.lastTime=now;GAME.elapsed+=dt;
+  GAME.lastTime=now;
+  // タイムストップ中: タイマー停止、速度成長は継続(loopExtraElapsedに加算)
+  const tStopped=GAME.timeStopUntil&&now<GAME.timeStopUntil;
+  if(tStopped)GAME.loopExtraElapsed+=dt;else GAME.elapsed+=dt;
+  {const el=document.getElementById('gametimer');
+   el.style.color=tStopped?'#5cffd0':'';}
   if(GAME.timerFrozen)GAME.loopExtraElapsed+=dt*2;
-  if(!GAME.timerFrozen){
+  if(!GAME.timerFrozen&&!tStopped){
     document.getElementById('gametimer').textContent=formatTimer(GAME.elapsed);
     GAME.highlightCells=Math.max(HL_MIN,GAME.highlightCells-HL_DECAY*dt);}
   const _conn=TILE.conns[GAME.connIdx];
-  GAME.u+=gameSpeed(GAME.elapsed)*dt*GAME.dir/(_conn&&_conn.len||1);
+  const _sp=gameSpeed(GAME.elapsed);
+  if(_sp>GAME.stats.maxSpeed)GAME.stats.maxSpeed=_sp;
+  GAME.u+=_sp*dt*GAME.dir/(_conn&&_conn.len||1);
 
   let safety=0;
   while(safety++<8){
@@ -828,6 +916,7 @@ function gameLoop(now){
     // 終了条件B: 遷移先が回転中
     if(grid[res.tileIdx].target!==null){GAME.u=exitSide==='b'?1:0;startDying();return;}
     GAME.tileIdx=res.tileIdx;GAME.connIdx=res.connIdx;
+    GAME.stats.visited.add(GAME.tileIdx+','+GAME.connIdx);
     if(res.side==='a'){GAME.u=Math.min(over,0.99);GAME.dir=1;}
     else{GAME.u=Math.max(1-over,0.01);GAME.dir=-1;}
     // 先読み: ループ一周カウント
@@ -841,6 +930,7 @@ function gameLoop(now){
     if(GAME.timerFrozen&&GAME.rotatedDuringLoop.has(GAME.tileIdx)){
       // 回転済みタイルに到達 → 無条件でタイマー再開（速度は維持）
       GAME.timerFrozen=false;GAME.rotatedDuringLoop.clear();
+      GAME.stats.loopEscapes++;sfx('escape');
       const el=document.getElementById('gametimer');if(el)el.style.opacity='1';
       // 新しいループ検出をリスタート
       GAME.lookahead=runLookahead();applyLookahead();}}
@@ -849,6 +939,15 @@ function gameLoop(now){
   for(let i=items.length-1;i>=0;i--){
     const it=items[i];
     if(it.tileIdx===GAME.tileIdx&&it.connIdx===GAME.connIdx){
+      if(it.type==='reverse'||it.type==='timestop'){
+        // アクティブアイテム: ストックに追加（上限あり）
+        if(GAME.inv[it.type]>=INV_CAP){
+          showToast('所持上限！（リリース版は広告視聴で追加入手）');
+        }else{
+          GAME.inv[it.type]++;GAME.stats.items++;sfx('item');updateInvUI();}
+        items.splice(i,1);continue;}
+      GAME.stats.items++;
+      sfx(it.type==='extend'?'item':'slow');
       if(it.type==='extend'){GAME.highlightCells=10;}
       else{
         // 「現在速度と初速の平均」になるようペナルティ計算
@@ -958,10 +1057,37 @@ function drawItems(){
     if(it.type==='extend'){
       tx.shadowColor='rgba(255,220,80,.95)';tx.shadowBlur=sz*2.5;
       tx.fillStyle='#ffce5c';drawStar(tx,0,0,sz,sz*0.42,5);
-    }else{
+    }else if(it.type==='slow'){
       tx.shadowColor='rgba(40,200,160,.95)';tx.shadowBlur=sz*2.5;
-      tx.fillStyle='#22ccaa';drawSlowIcon(tx,0,0,sz);}
+      tx.fillStyle='#22ccaa';drawSlowIcon(tx,0,0,sz);
+    }else{
+      // アクティブアイテム: 丸地＋グリフ
+      const col=it.type==='reverse'?'#a98aff':'#5cc8ff';
+      tx.shadowColor=col;tx.shadowBlur=sz*2.5;
+      tx.fillStyle=col;tx.beginPath();tx.arc(0,0,sz,0,7);tx.fill();
+      tx.shadowBlur=0;tx.fillStyle='#14121a';
+      tx.font='bold '+Math.round(sz*1.3)+'px sans-serif';
+      tx.textAlign='center';tx.textBaseline='middle';
+      tx.fillText(it.type==='reverse'?'⇄':'⏱',0,sz*0.05);}
     tx.restore();});}
+
+// ===== アクティブアイテム =====
+function updateInvUI(){
+  ['reverse','timestop'].forEach(t=>{
+    const btn=document.getElementById('btn-'+t);
+    const show=(GAME.state==='playing'||GAME.state==='paused')&&GAME.inv[t]>0;
+    btn.style.display=show?'':'none';
+    document.getElementById('inv-'+t).textContent=GAME.inv[t];});}
+function useActive(type){
+  if(GAME.state!=='playing'||GAME.inv[type]<=0)return;
+  GAME.inv[type]--;updateInvUI();
+  if(type==='reverse'){
+    GAME.dir*=-1;sfx('escape');
+    GAME.lookahead=runLookahead();applyLookahead();
+  }else{
+    GAME.timeStopUntil=performance.now()+TIMESTOP_DUR;sfx('slow');}}
+document.getElementById('btn-reverse').addEventListener('click',()=>useActive('reverse'));
+document.getElementById('btn-timestop').addEventListener('click',()=>useActive('timestop'));
 
 // 出現条件を満たすランダムな道にアイテムをスポーン
 function trySpawnItem(){
@@ -979,7 +1105,9 @@ function trySpawnItem(){
       cands.push({ti,ci});}}
   if(!cands.length)return;
   const {ti,ci}=cands[Math.floor(Math.random()*cands.length)];
-  items.push({tileIdx:ti,connIdx:ci,type:Math.random()<ITEM_SLOW_RATIO?'slow':'extend',born:performance.now()});}
+  const r=Math.random();
+  const type=r<ITEM_SLOW_RATIO?'slow':r<ITEM_SLOW_RATIO+0.1?'reverse':r<ITEM_SLOW_RATIO+0.2?'timestop':'extend';
+  items.push({tileIdx:ti,connIdx:ci,type,born:performance.now()});}
 
 // 先読みアルゴリズム: 現在位置から前方を辿りループ or デッドエンドを確定する。
 // ノード = (tileIdx, connIdx, dir)。同ノードの再訪問 → ループ。
@@ -1010,10 +1138,183 @@ function applyLookahead(){
     // 既にフリーズ済みなら新ループも維持
   }else{
     // デッドエンド or オープン → ループ脱出: タイマー再開・速度倍率リセット
+    if(GAME.timerFrozen)GAME.stats.loopEscapes++;
     GAME.timerFrozen=false;GAME.stepsToFreeze=Infinity;
     GAME.loopSpeedMult=1;GAME.rotatedDuringLoop.clear(); // loopExtraElapsedは保持（速度維持）
     const el=document.getElementById('gametimer');
     if(el)el.style.opacity='1';}}
+
+// ===== サウンド（WebAudio合成・外部ファイル不要） =====
+
+const AUDIO={ctx:null,seVol:0.7,bgmVol:0.35,bgmTimer:null,bgmStep:0};
+try{const sv=JSON.parse(localStorage.getItem('truchet-audio')||'{}');
+  if(sv.se!==undefined)AUDIO.seVol=sv.se;if(sv.bgm!==undefined)AUDIO.bgmVol=sv.bgm;}catch(e){}
+function saveAudio(){localStorage.setItem('truchet-audio',JSON.stringify({se:AUDIO.seVol,bgm:AUDIO.bgmVol}));}
+function actx(){
+  if(!AUDIO.ctx)AUDIO.ctx=new(window.AudioContext||window.webkitAudioContext)();
+  if(AUDIO.ctx.state==='suspended')AUDIO.ctx.resume();
+  return AUDIO.ctx;}
+function tone(freq,dur,type,vol,when,endFreq){
+  const ctx=actx(),t0=ctx.currentTime+(when||0);
+  const o=ctx.createOscillator(),g=ctx.createGain();
+  o.type=type||'sine';o.frequency.setValueAtTime(freq,t0);
+  if(endFreq)o.frequency.exponentialRampToValueAtTime(endFreq,t0+dur);
+  g.gain.setValueAtTime(0,t0);
+  g.gain.linearRampToValueAtTime(vol,t0+0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+  o.connect(g);g.connect(ctx.destination);
+  o.start(t0);o.stop(t0+dur+0.05);}
+function sfx(name){
+  const v=AUDIO.seVol;if(v<=0)return;
+  try{switch(name){
+    case'rotate':tone(420,0.09,'triangle',0.25*v,0,560);break;
+    case'item':tone(880,0.12,'sine',0.3*v);tone(1320,0.18,'sine',0.25*v,0.07);break;
+    case'slow':tone(520,0.2,'sine',0.3*v,0,260);break;
+    case'start':tone(660,0.15,'square',0.18*v);tone(990,0.25,'square',0.18*v,0.12);break;
+    case'count':tone(660,0.1,'square',0.15*v);break;
+    case'over':tone(440,0.5,'sawtooth',0.22*v,0,110);break;
+    case'record':[660,830,990,1320].forEach((f,i)=>tone(f,0.22,'triangle',0.25*v,i*0.1));break;
+    case'escape':tone(550,0.1,'sine',0.25*v);tone(825,0.15,'sine',0.25*v,0.08);break;}}catch(e){}}
+// ペンタトニックの生成BGM: 速度に応じてほんの少しテンポが上がる
+const BGM_SCALE=[220,261.6,293.7,349.2,392,440,523.3];
+function startBGM(){
+  if(AUDIO.bgmTimer)return;
+  AUDIO.bgmStep=0;
+  AUDIO.bgmTimer=setInterval(()=>{
+    const v=AUDIO.bgmVol;if(v<=0)return;
+    const i=AUDIO.bgmStep++;
+    const pat=[0,2,4,2,5,4,2,1];
+    const f=BGM_SCALE[pat[i%pat.length]]*(i%16<8?1:1.5);
+    try{tone(f,0.5,'sine',0.12*v);
+      if(i%4===0)tone(f/2,0.9,'triangle',0.08*v);}catch(e){}
+  },280);}
+function stopBGM(){if(AUDIO.bgmTimer){clearInterval(AUDIO.bgmTimer);AUDIO.bgmTimer=null;}}
+// 設定ポップオーバー
+const spop=document.getElementById('settingspop');
+document.getElementById('sevol').value=Math.round(AUDIO.seVol*100);
+document.getElementById('bgmvol').value=Math.round(AUDIO.bgmVol*100);
+document.getElementById('settingsbtn').addEventListener('click',e=>{
+  e.stopPropagation();
+  spop.style.display=spop.style.display==='flex'?'none':'flex';});
+document.addEventListener('click',e=>{
+  if(spop.style.display==='flex'&&!spop.contains(e.target))spop.style.display='none';});
+document.getElementById('sevol').addEventListener('input',e=>{
+  AUDIO.seVol=e.target.value/100;saveAudio();sfx('rotate');});
+document.getElementById('bgmvol').addEventListener('input',e=>{
+  AUDIO.bgmVol=e.target.value/100;saveAudio();});
+
+// ===== タイル図鑑 =====
+
+// canonical ID: 辺上の接続点の並び＋接続ペア構造を回転で正規化した最小文字列。
+// 接点の正確なt値・warp・z-orderは含めない（=バリアントは同一タイル扱い）。
+function canonicalFromEndpoints(n,eps){
+  let best=null;
+  for(let k=0;k<n;k++){
+    const arr=eps.map(p=>({edge:(p.edge+k)%n,t:p.t,conn:p.conn}));
+    arr.sort((a,b)=>a.edge-b.edge||a.t-b.t);
+    const lab={};let next=0;
+    const s=arr.map(p=>{
+      if(lab[p.conn]===undefined)lab[p.conn]=next++;
+      return p.edge+':'+lab[p.conn];}).join(',');
+    if(best===null||s<best)best=s;}
+  return n+'|'+best;}
+function tileEndpoints(td){
+  const eps=[];
+  td.conns.forEach((c,i)=>{
+    eps.push({edge:c.a.edge,t:round(c.a.t),conn:i});
+    eps.push({edge:c.b.edge,t:round(c.b.t),conn:i});});
+  return eps;}
+function canonicalTileId(td){return canonicalFromEndpoints(td.n,tileEndpoints(td));}
+// 鏡像ID: 周回方向を反転（edge→n-1-edge, t→1-t）してから回転正規化
+function mirrorTileId(td){
+  const eps=tileEndpoints(td).map(p=>({edge:(td.n-1-p.edge+td.n)%td.n,t:round(1-p.t),conn:p.conn}));
+  return canonicalFromEndpoints(td.n,eps);}
+
+const ZUKAN_KEY='truchet-zukan';
+function loadZukan(){try{return JSON.parse(localStorage.getItem(ZUKAN_KEY)||'{}');}catch(e){return{};}}
+
+let toastTimer=null;
+function showToast(msg){
+  const el=document.getElementById('toast');
+  el.textContent=msg;el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),2600);}
+
+// プレイ開始時に現タイルを図鑑へ登録。鏡像が既発見なら特別リワード。
+function registerDiscovery(){
+  if(!TILE)return;
+  const td={n:TILE.n,width:TILE.width,road:TILE.road,bg:TILE.bg,
+    conns:TILE.conns.map(c=>({a:c.a,b:c.b,warp:c.warp||null}))};
+  const id=canonicalTileId(td);
+  const z=loadZukan();
+  if(z[id])return;
+  z[id]={tile:td,date:Date.now()};
+  localStorage.setItem(ZUKAN_KEY,JSON.stringify(z));
+  const mid=mirrorTileId(td);
+  if(mid!==id&&z[mid])showToast('✨ 鏡像発見！ 図鑑でペアを確認しよう');
+  else showToast('📖 新しいタイルを図鑑に登録！');}
+
+let zukanShape=4;
+function renderZukan(){
+  const z=loadZukan();
+  const all=Object.entries(z).map(([id,v])=>({id,...v}));
+  [4,6,3].forEach(n=>{
+    document.getElementById('zc'+n).textContent=all.filter(e=>e.tile.n===n).length;});
+  document.querySelectorAll('.zukan-page').forEach(b=>
+    b.classList.toggle('active',+b.dataset.shape===zukanShape));
+  const list=document.getElementById('zukanlist');
+  list.innerHTML='';
+  const entries=all.filter(e=>e.tile.n===zukanShape).sort((a,b)=>a.date-b.date);
+  if(!entries.length){
+    const d=document.createElement('div');d.className='zukan-empty';
+    d.textContent='まだ発見なし — タイルを作ってプレイすると登録されるよ';
+    list.appendChild(d);return;}
+  const shown=new Set();
+  entries.forEach(e=>{
+    if(shown.has(e.id))return;
+    shown.add(e.id);
+    const mid=mirrorTileId(e.tile);
+    const selfMirror=mid===e.id;
+    const mirrorEntry=!selfMirror&&z[mid]?{id:mid,...z[mid]}:null;
+    if(mirrorEntry)shown.add(mid);
+    const card=zukanCard(e.tile,false,selfMirror?'self':(mirrorEntry?'mirror':null));
+    if(selfMirror||(!mirrorEntry&&mid===e.id)){list.appendChild(card);return;}
+    // 鏡像ペア表示: 発見済みなら実体、未発見ならシルエット
+    const pair=document.createElement('div');pair.className='zukan-pair';
+    pair.appendChild(card);
+    const link=document.createElement('div');link.className='zlink';pair.appendChild(link);
+    pair.appendChild(zukanCard(mirrorEntry?mirrorEntry.tile:e.tile,!mirrorEntry,'mirror'));
+    list.appendChild(pair);});}
+
+function zukanCard(td,silhouette,badge){
+  const card=document.createElement('div');
+  card.className='zukan-card'+(silhouette?' silhouette':'');
+  const cv=document.createElement('canvas');cv.width=96;cv.height=96;
+  const ctx=cv.getContext('2d');
+  if(silhouette){
+    // 未発見の鏡像: 反転描画 → モノクロシルエット化
+    ctx.save();ctx.translate(96,0);ctx.scale(-1,1);
+    renderTileMini(ctx,48,48,40,td);ctx.restore();
+    ctx.globalCompositeOperation='source-atop';
+    ctx.fillStyle='rgba(20,18,26,.88)';ctx.fillRect(0,0,96,96);
+    ctx.globalCompositeOperation='source-over';
+    ctx.fillStyle='rgba(237,232,245,.5)';ctx.font="26px 'Zen Maru Gothic'";
+    ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('?',48,48);
+  }else{
+    renderTileMini(ctx,48,48,40,td);}
+  card.appendChild(cv);
+  if(badge){
+    const b=document.createElement('span');
+    b.className='zbadge '+badge;
+    b.textContent=badge==='self'?'鏡映対称':(silhouette?'鏡像 未発見':'✨ 鏡像ペア');
+    card.appendChild(b);}
+  const lb=document.createElement('div');lb.className='zlabel';
+  lb.textContent=silhouette?'反転デザインで発見':td.conns.length+'本の道';
+  card.appendChild(lb);
+  return card;}
+
+document.querySelectorAll('.zukan-page').forEach(b=>b.addEventListener('click',()=>{
+  zukanShape=+b.dataset.shape;renderZukan();}));
 
 // ボタンハンドラ
 document.getElementById('startgame').addEventListener('click',startGame);
