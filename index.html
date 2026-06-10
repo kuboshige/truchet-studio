@@ -57,6 +57,31 @@
     .hint{display:none;}}
   /* ゲームオーバー画面スクロール */
   #gameover{overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  /* 図鑑 */
+  .zukan-head{display:flex;gap:8px;padding:12px 16px;flex-shrink:0;border-bottom:1px solid var(--grid);}
+  .zukan-page{border:1px solid var(--grid);background:transparent;color:var(--ink);padding:7px 14px;
+    border-radius:20px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;}
+  .zukan-page.active{background:var(--line);color:#14121a;border-color:var(--line);}
+  .zukan-page span{opacity:.65;font-size:11px;margin-left:4px;}
+  .zukan-list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px;
+    display:flex;flex-wrap:wrap;gap:14px;align-content:flex-start;}
+  .zukan-card{background:var(--panel);border:1px solid var(--grid);border-radius:14px;padding:12px;
+    display:flex;flex-direction:column;align-items:center;gap:6px;width:128px;}
+  .zukan-card canvas{border-radius:10px;}
+  .zukan-card .zlabel{font-size:11px;opacity:.7;text-align:center;line-height:1.4;}
+  .zukan-card .zbadge{font-size:10px;padding:2px 8px;border-radius:12px;font-weight:700;}
+  .zbadge.mirror{background:#4a3a6e;color:#d8c8ff;}
+  .zbadge.self{background:#2c6e49;color:#d7ffe8;}
+  .zukan-pair{display:flex;align-items:center;gap:0;}
+  .zukan-pair .zlink{width:22px;height:2px;background:var(--line);opacity:.5;flex-shrink:0;}
+  .zukan-card.silhouette{opacity:.55;border-style:dashed;}
+  .zukan-empty{opacity:.6;font-size:13px;padding:30px;width:100%;text-align:center;}
+  /* トースト通知 */
+  #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%) translateY(20px);
+    background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:24px;
+    padding:10px 22px;font-size:13.5px;font-weight:700;opacity:0;pointer-events:none;
+    transition:opacity .3s,transform .3s;z-index:300;box-shadow:0 8px 30px #000a;white-space:nowrap;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 </style>
 </head>
 <body>
@@ -66,6 +91,7 @@
     <div class="tabs">
       <button class="tab active" data-screen="design">デザイン</button>
       <button class="tab" data-screen="tile">敷き詰め</button>
+      <button class="tab" data-screen="zukan">図鑑</button>
     </div>
   </header>
   <main>
@@ -118,8 +144,17 @@
         </div>
       </div>
     </section>
+    <section class="screen" id="zukan">
+      <div class="zukan-head">
+        <button class="zukan-page active" data-shape="4">■ 四角形 <span id="zc4">0</span></button>
+        <button class="zukan-page" data-shape="6">⬢ 六角形 <span id="zc6">0</span></button>
+        <button class="zukan-page" data-shape="3">▲ 三角形 <span id="zc3">0</span></button>
+      </div>
+      <div class="zukan-list" id="zukanlist"></div>
+    </section>
   </main>
 </div>
+<div id="toast"></div>
 <div class="pop" id="pop"></div>
 <script>
 const PALETTE=['#cdbcff','#ff5c8a','#ffce5c','#5cffd0','#5ca8ff','#ff8a5c',
@@ -517,9 +552,10 @@ function switchScreen(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.screen===name));
   document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===name));
   if(name==='design'){if(GAME.state!=='idle')stopGame();fitDesign();}
-  if(name==='tile'){if(!TILE)buildSnapshot();fitTile();if(!grid.length)makeGrid();drawTiles();}}
+  if(name==='tile'){if(!TILE)buildSnapshot();fitTile();if(!grid.length)makeGrid();drawTiles();}
+  if(name==='zukan')renderZukan();}
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
-  if(t.dataset.screen==='design'&&GAME.state!=='idle'){
+  if(t.dataset.screen!=='tile'&&GAME.state!=='idle'){
     if(GAME.state==='playing')pauseGame();
     return; // 一時停止メニュー経由でのみデザインへ戻れる
   }
@@ -661,6 +697,7 @@ function startGame(){
   document.getElementById('gametimer').style.opacity='1';
   document.getElementById('gameover').style.display='none';
   GAME.lookahead=runLookahead();applyLookahead();
+  registerDiscovery();
   setGameState('countdown');
   startCountdown();}
 
@@ -1014,6 +1051,119 @@ function applyLookahead(){
     GAME.loopSpeedMult=1;GAME.rotatedDuringLoop.clear(); // loopExtraElapsedは保持（速度維持）
     const el=document.getElementById('gametimer');
     if(el)el.style.opacity='1';}}
+
+// ===== タイル図鑑 =====
+
+// canonical ID: 辺上の接続点の並び＋接続ペア構造を回転で正規化した最小文字列。
+// 接点の正確なt値・warp・z-orderは含めない（=バリアントは同一タイル扱い）。
+function canonicalFromEndpoints(n,eps){
+  let best=null;
+  for(let k=0;k<n;k++){
+    const arr=eps.map(p=>({edge:(p.edge+k)%n,t:p.t,conn:p.conn}));
+    arr.sort((a,b)=>a.edge-b.edge||a.t-b.t);
+    const lab={};let next=0;
+    const s=arr.map(p=>{
+      if(lab[p.conn]===undefined)lab[p.conn]=next++;
+      return p.edge+':'+lab[p.conn];}).join(',');
+    if(best===null||s<best)best=s;}
+  return n+'|'+best;}
+function tileEndpoints(td){
+  const eps=[];
+  td.conns.forEach((c,i)=>{
+    eps.push({edge:c.a.edge,t:round(c.a.t),conn:i});
+    eps.push({edge:c.b.edge,t:round(c.b.t),conn:i});});
+  return eps;}
+function canonicalTileId(td){return canonicalFromEndpoints(td.n,tileEndpoints(td));}
+// 鏡像ID: 周回方向を反転（edge→n-1-edge, t→1-t）してから回転正規化
+function mirrorTileId(td){
+  const eps=tileEndpoints(td).map(p=>({edge:(td.n-1-p.edge+td.n)%td.n,t:round(1-p.t),conn:p.conn}));
+  return canonicalFromEndpoints(td.n,eps);}
+
+const ZUKAN_KEY='truchet-zukan';
+function loadZukan(){try{return JSON.parse(localStorage.getItem(ZUKAN_KEY)||'{}');}catch(e){return{};}}
+
+let toastTimer=null;
+function showToast(msg){
+  const el=document.getElementById('toast');
+  el.textContent=msg;el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),2600);}
+
+// プレイ開始時に現タイルを図鑑へ登録。鏡像が既発見なら特別リワード。
+function registerDiscovery(){
+  if(!TILE)return;
+  const td={n:TILE.n,width:TILE.width,road:TILE.road,bg:TILE.bg,
+    conns:TILE.conns.map(c=>({a:c.a,b:c.b,warp:c.warp||null}))};
+  const id=canonicalTileId(td);
+  const z=loadZukan();
+  if(z[id])return;
+  z[id]={tile:td,date:Date.now()};
+  localStorage.setItem(ZUKAN_KEY,JSON.stringify(z));
+  const mid=mirrorTileId(td);
+  if(mid!==id&&z[mid])showToast('✨ 鏡像発見！ 図鑑でペアを確認しよう');
+  else showToast('📖 新しいタイルを図鑑に登録！');}
+
+let zukanShape=4;
+function renderZukan(){
+  const z=loadZukan();
+  const all=Object.entries(z).map(([id,v])=>({id,...v}));
+  [4,6,3].forEach(n=>{
+    document.getElementById('zc'+n).textContent=all.filter(e=>e.tile.n===n).length;});
+  document.querySelectorAll('.zukan-page').forEach(b=>
+    b.classList.toggle('active',+b.dataset.shape===zukanShape));
+  const list=document.getElementById('zukanlist');
+  list.innerHTML='';
+  const entries=all.filter(e=>e.tile.n===zukanShape).sort((a,b)=>a.date-b.date);
+  if(!entries.length){
+    const d=document.createElement('div');d.className='zukan-empty';
+    d.textContent='まだ発見なし — タイルを作ってプレイすると登録されるよ';
+    list.appendChild(d);return;}
+  const shown=new Set();
+  entries.forEach(e=>{
+    if(shown.has(e.id))return;
+    shown.add(e.id);
+    const mid=mirrorTileId(e.tile);
+    const selfMirror=mid===e.id;
+    const mirrorEntry=!selfMirror&&z[mid]?{id:mid,...z[mid]}:null;
+    if(mirrorEntry)shown.add(mid);
+    const card=zukanCard(e.tile,false,selfMirror?'self':(mirrorEntry?'mirror':null));
+    if(selfMirror||(!mirrorEntry&&mid===e.id)){list.appendChild(card);return;}
+    // 鏡像ペア表示: 発見済みなら実体、未発見ならシルエット
+    const pair=document.createElement('div');pair.className='zukan-pair';
+    pair.appendChild(card);
+    const link=document.createElement('div');link.className='zlink';pair.appendChild(link);
+    pair.appendChild(zukanCard(mirrorEntry?mirrorEntry.tile:e.tile,!mirrorEntry,'mirror'));
+    list.appendChild(pair);});}
+
+function zukanCard(td,silhouette,badge){
+  const card=document.createElement('div');
+  card.className='zukan-card'+(silhouette?' silhouette':'');
+  const cv=document.createElement('canvas');cv.width=96;cv.height=96;
+  const ctx=cv.getContext('2d');
+  if(silhouette){
+    // 未発見の鏡像: 反転描画 → モノクロシルエット化
+    ctx.save();ctx.translate(96,0);ctx.scale(-1,1);
+    renderTileMini(ctx,48,48,40,td);ctx.restore();
+    ctx.globalCompositeOperation='source-atop';
+    ctx.fillStyle='rgba(20,18,26,.88)';ctx.fillRect(0,0,96,96);
+    ctx.globalCompositeOperation='source-over';
+    ctx.fillStyle='rgba(237,232,245,.5)';ctx.font="26px 'Zen Maru Gothic'";
+    ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('?',48,48);
+  }else{
+    renderTileMini(ctx,48,48,40,td);}
+  card.appendChild(cv);
+  if(badge){
+    const b=document.createElement('span');
+    b.className='zbadge '+badge;
+    b.textContent=badge==='self'?'鏡映対称':(silhouette?'鏡像 未発見':'✨ 鏡像ペア');
+    card.appendChild(b);}
+  const lb=document.createElement('div');lb.className='zlabel';
+  lb.textContent=silhouette?'反転デザインで発見':td.conns.length+'本の道';
+  card.appendChild(lb);
+  return card;}
+
+document.querySelectorAll('.zukan-page').forEach(b=>b.addEventListener('click',()=>{
+  zukanShape=+b.dataset.shape;renderZukan();}));
 
 // ボタンハンドラ
 document.getElementById('startgame').addEventListener('click',startGame);
