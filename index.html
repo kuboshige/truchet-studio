@@ -122,6 +122,8 @@
         <button class="btn btn-primary" id="startgame" style="display:none">▶ スタート</button>
         <span id="gametimer" style="display:none;font-family:'Major Mono Display',monospace;font-size:15px;color:var(--line);letter-spacing:1px;min-width:90px;text-align:center">00:00.00</span>
         <button class="btn btn-ghost" id="pausebtn" style="display:none">⏸ 一時停止</button>
+        <button class="btn btn-ghost" id="btn-reverse" style="display:none;background:#4a3a6e;color:#d8c8ff">⇄ <span id="inv-reverse">0</span></button>
+        <button class="btn btn-ghost" id="btn-timestop" style="display:none;background:#1e4a5e;color:#aee8ff">⏱ <span id="inv-timestop">0</span></button>
         <span class="hint">タイルをタップで回転（四角90°/三角120°/六角60°）＋アニメ ／ どの向きでも道はつながる</span>
       </div>
       <div id="pausemenu" style="position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:50;background:rgba(20,18,26,.82)">
@@ -659,7 +661,10 @@ const GAME={state:'idle',tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,ra
   loopSpeedMult:1,rotatedDuringLoop:new Set(),loopExtraElapsed:0,
   dyingProgress:0,finalTime:0,finalSpeed:0,
   highlightCells:10,speedPenalty:0,startIdx:0,
-  stats:{items:0,maxSpeed:0,loopEscapes:0,visited:new Set()}};
+  stats:{items:0,maxSpeed:0,loopEscapes:0,visited:new Set()},
+  inv:{reverse:0,timestop:0},timeStopUntil:0};
+const INV_CAP=2;            // 3個目以降はリワード広告（リリース版で解放）
+const TIMESTOP_DUR=5000;    // 調整項目: タイムストップ持続(ms)
 let items=[]; // [{tileIdx,connIdx,type:'extend'|'slow',born:ms}]
 const G_BASE=0.55,G_A=0.0035;
 const HL_DECAY=1/20;            // 調整項目: 光セル数/秒 (20s で1セル減)
@@ -680,6 +685,8 @@ function setGameState(s){
   document.getElementById('shuffle').style.display=idle?'':'none';
   document.getElementById('pausebtn').style.display=playing?'':'none';
   document.getElementById('pausemenu').style.display=s==='paused'?'flex':'none';
+  if(typeof updateInvUI==='function')updateInvUI();
+  if(idle)document.getElementById('gametimer').style.color='';
   if(!idle){
     const el=document.getElementById('gametimer');
     el.textContent=formatTimer(GAME.timerFrozen?GAME.frozenTime:GAME.elapsed);
@@ -707,6 +714,7 @@ function startGame(){
   GAME.highlightCells=10;GAME.speedPenalty=0;items=[];
   GAME.stats={items:0,maxSpeed:0,loopEscapes:0,visited:new Set()};
   GAME.stats.visited.add(GAME.tileIdx+','+GAME.connIdx);
+  GAME.inv={reverse:0,timestop:0};GAME.timeStopUntil=0;updateInvUI();
   document.getElementById('gametimer').style.opacity='1';
   document.getElementById('gameover').style.display='none';
   GAME.lookahead=runLookahead();applyLookahead();
@@ -881,9 +889,14 @@ function resumeGame(){
 function gameLoop(now){
   if(GAME.state!=='playing')return;
   const dt=Math.min((now-GAME.lastTime)/1000,0.1);
-  GAME.lastTime=now;GAME.elapsed+=dt;
+  GAME.lastTime=now;
+  // タイムストップ中: タイマー停止、速度成長は継続(loopExtraElapsedに加算)
+  const tStopped=GAME.timeStopUntil&&now<GAME.timeStopUntil;
+  if(tStopped)GAME.loopExtraElapsed+=dt;else GAME.elapsed+=dt;
+  {const el=document.getElementById('gametimer');
+   el.style.color=tStopped?'#5cffd0':'';}
   if(GAME.timerFrozen)GAME.loopExtraElapsed+=dt*2;
-  if(!GAME.timerFrozen){
+  if(!GAME.timerFrozen&&!tStopped){
     document.getElementById('gametimer').textContent=formatTimer(GAME.elapsed);
     GAME.highlightCells=Math.max(HL_MIN,GAME.highlightCells-HL_DECAY*dt);}
   const _conn=TILE.conns[GAME.connIdx];
@@ -926,6 +939,13 @@ function gameLoop(now){
   for(let i=items.length-1;i>=0;i--){
     const it=items[i];
     if(it.tileIdx===GAME.tileIdx&&it.connIdx===GAME.connIdx){
+      if(it.type==='reverse'||it.type==='timestop'){
+        // アクティブアイテム: ストックに追加（上限あり）
+        if(GAME.inv[it.type]>=INV_CAP){
+          showToast('所持上限！（リリース版は広告視聴で追加入手）');
+        }else{
+          GAME.inv[it.type]++;GAME.stats.items++;sfx('item');updateInvUI();}
+        items.splice(i,1);continue;}
       GAME.stats.items++;
       sfx(it.type==='extend'?'item':'slow');
       if(it.type==='extend'){GAME.highlightCells=10;}
@@ -1037,10 +1057,37 @@ function drawItems(){
     if(it.type==='extend'){
       tx.shadowColor='rgba(255,220,80,.95)';tx.shadowBlur=sz*2.5;
       tx.fillStyle='#ffce5c';drawStar(tx,0,0,sz,sz*0.42,5);
-    }else{
+    }else if(it.type==='slow'){
       tx.shadowColor='rgba(40,200,160,.95)';tx.shadowBlur=sz*2.5;
-      tx.fillStyle='#22ccaa';drawSlowIcon(tx,0,0,sz);}
+      tx.fillStyle='#22ccaa';drawSlowIcon(tx,0,0,sz);
+    }else{
+      // アクティブアイテム: 丸地＋グリフ
+      const col=it.type==='reverse'?'#a98aff':'#5cc8ff';
+      tx.shadowColor=col;tx.shadowBlur=sz*2.5;
+      tx.fillStyle=col;tx.beginPath();tx.arc(0,0,sz,0,7);tx.fill();
+      tx.shadowBlur=0;tx.fillStyle='#14121a';
+      tx.font='bold '+Math.round(sz*1.3)+'px sans-serif';
+      tx.textAlign='center';tx.textBaseline='middle';
+      tx.fillText(it.type==='reverse'?'⇄':'⏱',0,sz*0.05);}
     tx.restore();});}
+
+// ===== アクティブアイテム =====
+function updateInvUI(){
+  ['reverse','timestop'].forEach(t=>{
+    const btn=document.getElementById('btn-'+t);
+    const show=(GAME.state==='playing'||GAME.state==='paused')&&GAME.inv[t]>0;
+    btn.style.display=show?'':'none';
+    document.getElementById('inv-'+t).textContent=GAME.inv[t];});}
+function useActive(type){
+  if(GAME.state!=='playing'||GAME.inv[type]<=0)return;
+  GAME.inv[type]--;updateInvUI();
+  if(type==='reverse'){
+    GAME.dir*=-1;sfx('escape');
+    GAME.lookahead=runLookahead();applyLookahead();
+  }else{
+    GAME.timeStopUntil=performance.now()+TIMESTOP_DUR;sfx('slow');}}
+document.getElementById('btn-reverse').addEventListener('click',()=>useActive('reverse'));
+document.getElementById('btn-timestop').addEventListener('click',()=>useActive('timestop'));
 
 // 出現条件を満たすランダムな道にアイテムをスポーン
 function trySpawnItem(){
@@ -1058,7 +1105,9 @@ function trySpawnItem(){
       cands.push({ti,ci});}}
   if(!cands.length)return;
   const {ti,ci}=cands[Math.floor(Math.random()*cands.length)];
-  items.push({tileIdx:ti,connIdx:ci,type:Math.random()<ITEM_SLOW_RATIO?'slow':'extend',born:performance.now()});}
+  const r=Math.random();
+  const type=r<ITEM_SLOW_RATIO?'slow':r<ITEM_SLOW_RATIO+0.1?'reverse':r<ITEM_SLOW_RATIO+0.2?'timestop':'extend';
+  items.push({tileIdx:ti,connIdx:ci,type,born:performance.now()});}
 
 // 先読みアルゴリズム: 現在位置から前方を辿りループ or デッドエンドを確定する。
 // ノード = (tileIdx, connIdx, dir)。同ノードの再訪問 → ループ。
