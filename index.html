@@ -137,6 +137,7 @@
           <span id="go-speed" style="font-size:13px;opacity:.65"></span>
         </div>
         <div id="go-newrecord" style="display:none;color:var(--gold);font-size:13px;font-weight:700;margin-bottom:6px">★ 新記録！</div>
+        <div id="go-stats" style="display:flex;flex-wrap:wrap;gap:6px 16px;justify-content:center;width:280px;margin:4px 0;font-size:11.5px;opacity:.85"></div>
         <div id="go-ranking" style="width:270px;margin:6px 0 4px;display:flex;flex-direction:column;gap:2px"></div>
         <div style="display:flex;gap:10px;margin-top:14px">
           <button class="btn btn-primary" id="go-restart">↺ 最初から</button>
@@ -648,7 +649,8 @@ const GAME={state:'idle',tileIdx:0,connIdx:0,u:0.5,dir:1,elapsed:0,lastTime:0,ra
   lookahead:null,stepsToFreeze:Infinity,timerFrozen:false,frozenTime:0,
   loopSpeedMult:1,rotatedDuringLoop:new Set(),loopExtraElapsed:0,
   dyingProgress:0,finalTime:0,finalSpeed:0,
-  highlightCells:10,speedPenalty:0,startIdx:0};
+  highlightCells:10,speedPenalty:0,startIdx:0,
+  stats:{items:0,maxSpeed:0,loopEscapes:0,visited:new Set()}};
 let items=[]; // [{tileIdx,connIdx,type:'extend'|'slow',born:ms}]
 const G_BASE=0.55,G_A=0.0035;
 const HL_DECAY=1/20;            // 調整項目: 光セル数/秒 (20s で1セル減)
@@ -694,6 +696,8 @@ function startGame(){
   GAME.timerFrozen=false;GAME.frozenTime=0;GAME.stepsToFreeze=Infinity;
   GAME.loopSpeedMult=1;GAME.loopExtraElapsed=0;GAME.rotatedDuringLoop.clear();
   GAME.highlightCells=10;GAME.speedPenalty=0;items=[];
+  GAME.stats={items:0,maxSpeed:0,loopEscapes:0,visited:new Set()};
+  GAME.stats.visited.add(GAME.tileIdx+','+GAME.connIdx);
   document.getElementById('gametimer').style.opacity='1';
   document.getElementById('gameover').style.display='none';
   GAME.lookahead=runLookahead();applyLookahead();
@@ -783,11 +787,16 @@ function renderTileMini(ctx,cx,cy,R,tileData){
   TILE=saved;}
 
 function showGameOver(){
-  const key='truchet-rankings';
+  const gridN=+document.getElementById('gridn').value;
+  const key='truchet-rankings-g'+gridN; // グリッドサイズ別ランキング
   let records=JSON.parse(localStorage.getItem(key)||'[]').filter(r=>r.tile);
   const tileSnap={n:TILE.n,width:TILE.width,road:TILE.road,bg:TILE.bg,
     conns:TILE.conns.map(c=>({a:c.a,b:c.b,warp:c.warp||null}))};
-  const newRecord={time:GAME.finalTime,speed:GAME.finalSpeed,date:Date.now(),tile:tileSnap};
+  const st=GAME.stats;
+  const totalConns=grid.length*TILE.conns.length;
+  const coverage=totalConns?Math.round(st.visited.size/totalConns*100):0;
+  const newRecord={time:GAME.finalTime,speed:GAME.finalSpeed,date:Date.now(),tile:tileSnap,
+    items:st.items,coverage,maxSpeed:st.maxSpeed,loopEscapes:st.loopEscapes};
   records.push(newRecord);
   records.sort((a,b)=>b.time-a.time);
   const newRank=records.indexOf(newRecord);
@@ -804,6 +813,15 @@ function showGameOver(){
   document.getElementById('go-time').textContent=formatTimer(GAME.finalTime);
   document.getElementById('go-speed').textContent='速度 '+GAME.finalSpeed.toFixed(2)+'×';
   document.getElementById('go-newrecord').style.display=isNewTileRecord?'':'none';
+  // 5指標スコア表示
+  const statsEl=document.getElementById('go-stats');
+  statsEl.innerHTML='';
+  [['アイテム',st.items+'個'],['道カバー',coverage+'%'],
+   ['最高速度',st.maxSpeed.toFixed(2)+'×'],['ループ脱出',st.loopEscapes+'回'],
+   ['グリッド',gridN+'×'+gridN]].forEach(([k,v])=>{
+    const sp=document.createElement('span');
+    sp.innerHTML=k+' <b style="color:var(--line)">'+v+'</b>';
+    statsEl.appendChild(sp);});
   const rankEl=document.getElementById('go-ranking');
   rankEl.innerHTML='';
   records.forEach((rec,i)=>{
@@ -851,7 +869,9 @@ function gameLoop(now){
     document.getElementById('gametimer').textContent=formatTimer(GAME.elapsed);
     GAME.highlightCells=Math.max(HL_MIN,GAME.highlightCells-HL_DECAY*dt);}
   const _conn=TILE.conns[GAME.connIdx];
-  GAME.u+=gameSpeed(GAME.elapsed)*dt*GAME.dir/(_conn&&_conn.len||1);
+  const _sp=gameSpeed(GAME.elapsed);
+  if(_sp>GAME.stats.maxSpeed)GAME.stats.maxSpeed=_sp;
+  GAME.u+=_sp*dt*GAME.dir/(_conn&&_conn.len||1);
 
   let safety=0;
   while(safety++<8){
@@ -865,6 +885,7 @@ function gameLoop(now){
     // 終了条件B: 遷移先が回転中
     if(grid[res.tileIdx].target!==null){GAME.u=exitSide==='b'?1:0;startDying();return;}
     GAME.tileIdx=res.tileIdx;GAME.connIdx=res.connIdx;
+    GAME.stats.visited.add(GAME.tileIdx+','+GAME.connIdx);
     if(res.side==='a'){GAME.u=Math.min(over,0.99);GAME.dir=1;}
     else{GAME.u=Math.max(1-over,0.01);GAME.dir=-1;}
     // 先読み: ループ一周カウント
@@ -878,6 +899,7 @@ function gameLoop(now){
     if(GAME.timerFrozen&&GAME.rotatedDuringLoop.has(GAME.tileIdx)){
       // 回転済みタイルに到達 → 無条件でタイマー再開（速度は維持）
       GAME.timerFrozen=false;GAME.rotatedDuringLoop.clear();
+      GAME.stats.loopEscapes++;
       const el=document.getElementById('gametimer');if(el)el.style.opacity='1';
       // 新しいループ検出をリスタート
       GAME.lookahead=runLookahead();applyLookahead();}}
@@ -886,6 +908,7 @@ function gameLoop(now){
   for(let i=items.length-1;i>=0;i--){
     const it=items[i];
     if(it.tileIdx===GAME.tileIdx&&it.connIdx===GAME.connIdx){
+      GAME.stats.items++;
       if(it.type==='extend'){GAME.highlightCells=10;}
       else{
         // 「現在速度と初速の平均」になるようペナルティ計算
@@ -1047,6 +1070,7 @@ function applyLookahead(){
     // 既にフリーズ済みなら新ループも維持
   }else{
     // デッドエンド or オープン → ループ脱出: タイマー再開・速度倍率リセット
+    if(GAME.timerFrozen)GAME.stats.loopEscapes++;
     GAME.timerFrozen=false;GAME.stepsToFreeze=Infinity;
     GAME.loopSpeedMult=1;GAME.rotatedDuringLoop.clear(); // loopExtraElapsedは保持（速度維持）
     const el=document.getElementById('gametimer');
