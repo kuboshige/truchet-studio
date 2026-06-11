@@ -63,6 +63,8 @@
     border-radius:20px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;}
   .zukan-page.active{background:var(--line);color:#14121a;border-color:var(--line);}
   .zukan-page span{opacity:.65;font-size:11px;margin-left:4px;}
+  .zukan-sort{margin-left:auto;border:1px solid var(--grid);background:transparent;color:var(--ink);
+    padding:6px 10px;border-radius:14px;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;}
   .zukan-list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px;
     display:flex;flex-wrap:wrap;gap:14px;align-content:flex-start;}
   .zukan-card{background:var(--panel);border:1px solid var(--grid);border-radius:14px;padding:12px;
@@ -196,6 +198,7 @@
         <button class="zukan-page active" data-shape="4">■ 四角形 <span id="zc4">0</span></button>
         <button class="zukan-page" data-shape="6">⬢ 六角形 <span id="zc6">0</span></button>
         <button class="zukan-page" data-shape="3">▲ 三角形 <span id="zc3">0</span></button>
+        <button class="zukan-sort" id="zukan-sort-btn" title="並べ替え">道の本数順 ↕</button>
       </div>
       <div class="zukan-list" id="zukanlist"></div>
     </section>
@@ -799,7 +802,7 @@ function startCountdown(){
   const startT=performance.now();
   function countFrame(now){
     if(GAME.state!=='countdown')return;
-    GAME.countdownValue=Math.min((now-startT)/1000,3.7);
+    GAME.countdownValue=Math.max(0,Math.min((now-startT)/1000,3.7));
     const c=3-Math.floor(GAME.countdownValue);
     if(c<lastCount&&c>0){lastCount=c;sfx('count');}
     drawTiles();
@@ -1205,6 +1208,18 @@ function tone(freq,dur,type,vol,when,endFreq){
   o.start(t0);o.stop(t0+dur+0.05);}
 function sfx(name){
   const v=AUDIO.seVol;if(v<=0)return;
+  // retro SEパック
+  if(typeof CURRENT_SKIN!=='undefined'&&CURRENT_SKIN.se==='retro'){
+    try{switch(name){
+      case'rotate':tone(440,0.06,'square',0.18*v,0,660);return;
+      case'item':tone(1320,0.08,'square',0.22*v);tone(1760,0.12,'square',0.18*v,0.05);return;
+      case'slow':tone(440,0.15,'square',0.22*v,0,220);return;
+      case'start':tone(880,0.1,'square',0.15*v);tone(1320,0.1,'square',0.15*v,0.1);tone(1760,0.18,'square',0.15*v,0.2);return;
+      case'count':tone(880,0.07,'square',0.12*v);return;
+      case'over':tone(220,0.6,'square',0.18*v,0,55);return;
+      case'record':[440,660,880,1320,1760].forEach((f,i)=>tone(f,0.15,'square',0.18*v,i*0.08));return;
+      case'escape':tone(660,0.08,'square',0.18*v);tone(1100,0.12,'square',0.18*v,0.06);return;}}catch(e){return;}}
+  // デフォルトSE
   try{switch(name){
     case'rotate':tone(420,0.09,'triangle',0.25*v,0,560);break;
     case'item':tone(880,0.12,'sine',0.3*v);tone(1320,0.18,'sine',0.25*v,0.07);break;
@@ -1320,6 +1335,7 @@ function registerDiscovery(){
   else showToast('📖 新しいタイルを図鑑に登録！');}
 
 let zukanShape=4;
+let zukanSort='conns'; // 'conns' | 'date'
 function renderZukan(){
   const z=loadZukan();
   const all=Object.entries(z).map(([id,v])=>({id,...v}));
@@ -1327,9 +1343,12 @@ function renderZukan(){
     document.getElementById('zc'+n).textContent=all.filter(e=>e.tile.n===n).length;});
   document.querySelectorAll('.zukan-page').forEach(b=>
     b.classList.toggle('active',+b.dataset.shape===zukanShape));
+  const sortBtn=document.getElementById('zukan-sort-btn');
+  sortBtn.textContent=zukanSort==='conns'?'道の本数順 ↕':'発見順 ↕';
   const list=document.getElementById('zukanlist');
   list.innerHTML='';
-  const entries=all.filter(e=>e.tile.n===zukanShape).sort((a,b)=>a.date-b.date);
+  const entries=all.filter(e=>e.tile.n===zukanShape).sort((a,b)=>
+    zukanSort==='conns'?a.tile.conns.length-b.tile.conns.length||a.date-b.date:a.date-b.date);
   if(!entries.length){
     const d=document.createElement('div');d.className='zukan-empty';
     d.textContent='まだ発見なし — タイルを作ってプレイすると登録されるよ';
@@ -1380,6 +1399,8 @@ function zukanCard(td,silhouette,badge){
 
 document.querySelectorAll('.zukan-page').forEach(b=>b.addEventListener('click',()=>{
   zukanShape=+b.dataset.shape;renderZukan();}));
+document.getElementById('zukan-sort-btn').addEventListener('click',()=>{
+  zukanSort=zukanSort==='conns'?'date':'conns';renderZukan();});
 
 // ===== リワード解放 & カスタマイズ =====
 
@@ -1421,22 +1442,6 @@ const SKIN_KEY='truchet-skin';
 let CURRENT_SKIN={avatar:'default',bgm:'penta',effect:'pink',se:'default'};
 try{const s=JSON.parse(localStorage.getItem(SKIN_KEY)||'{}');Object.assign(CURRENT_SKIN,s);}catch(e){}
 function saveSkin(){localStorage.setItem(SKIN_KEY,JSON.stringify(CURRENT_SKIN));}
-
-// スキン別SE: retro は square wave 重視
-const _origSfx=sfx;
-function sfx(name){
-  if(CURRENT_SKIN.se==='retro'){
-    const v=AUDIO.seVol;if(v<=0)return;
-    try{switch(name){
-      case'rotate':tone(440,0.06,'square',0.18*v,0,660);return;
-      case'item':tone(1320,0.08,'square',0.22*v);tone(1760,0.12,'square',0.18*v,0.05);return;
-      case'slow':tone(440,0.15,'square',0.22*v,0,220);return;
-      case'start':tone(880,0.1,'square',0.15*v);tone(1320,0.1,'square',0.15*v,0.1);tone(1760,0.18,'square',0.15*v,0.2);return;
-      case'count':tone(880,0.07,'square',0.12*v);return;
-      case'over':tone(220,0.6,'square',0.18*v,0,55);return;
-      case'record':[440,660,880,1320,1760].forEach((f,i)=>tone(f,0.15,'square',0.18*v,i*0.08));return;
-      case'escape':tone(660,0.08,'square',0.18*v);tone(1100,0.12,'square',0.18*v,0.06);return;}}catch(e){}}
-  _origSfx(name);}
 
 // アバター描画
 function drawAvatar(ctx,sz,alpha){
@@ -1542,41 +1547,52 @@ function buildSnapshotFromData(td){
     c.itemU=bestU;});
   document.getElementById('startgame').style.display='';}
 
-function showVariantModal(canonicalId,tileData){
+// バリアントグループID: 接点位置を粗く量子化し、warpも無視してゆるくグループ化する。
+// これにより「接点位置が少し違うもの」「ベジェを歪ませたもの」が同じバリアントに入る。
+function variantGroupId(td){
+  const qT=t=>{
+    if(t<0.22)return 'A';if(t<0.44)return 'B';if(t>0.78)return 'E';if(t>0.56)return 'D';return 'C';};
+  const eps=td.conns.flatMap((c,i)=>[
+    {edge:c.a.edge,t:qT(c.a.t),conn:i},
+    {edge:c.b.edge,t:qT(c.b.t),conn:i}]);
+  return canonicalFromEndpoints(td.n,eps);}
+
+function showVariantModal(tileData){
+  const vgid=variantGroupId(tileData);
   const z=loadZukan();
-  const variants=Object.values(z).filter(e=>e.tile&&canonicalTileId(e.tile)===canonicalId);
-  const grid=document.getElementById('variant-grid');
-  grid.innerHTML='';
+  const variants=Object.values(z).filter(e=>e.tile&&variantGroupId(e.tile)===vgid);
+  const vGrid=document.getElementById('variant-grid');
+  vGrid.innerHTML='';
+  if(!variants.length){
+    const m=document.createElement('p');m.style.opacity='.6';m.textContent='バリアントなし';
+    vGrid.appendChild(m);}
   variants.forEach(e=>{
     const card=document.createElement('div');card.className='variant-card';
     const cv=document.createElement('canvas');cv.width=80;cv.height=80;
     renderTileMini(cv.getContext('2d'),40,40,34,e.tile);
     card.appendChild(cv);
-    const lbl=document.createElement('span');lbl.textContent=e.tile.conns.length+'本の道';
+    const haswarp=e.tile.conns.some(c=>c.warp);
+    const lbl=document.createElement('span');
+    lbl.textContent=e.tile.conns.length+'本'+(haswarp?' (ワープ)':'');
     card.appendChild(lbl);
     card.addEventListener('click',()=>{
       if(!confirm('このタイルで遊びますか？\n現在編集中のタイルは失われます'))return;
       document.getElementById('variant-modal').classList.remove('open');
       buildSnapshotFromData(e.tile);
-      if(!grid||!grid.length)makeGrid();
-      switchScreen('tile');});
-    grid.appendChild(card);});
+      makeGrid();switchScreen('tile');});
+    vGrid.appendChild(card);});
   document.getElementById('variant-modal').classList.add('open');}
 
 document.getElementById('variant-close').addEventListener('click',()=>
   document.getElementById('variant-modal').classList.remove('open'));
 
-// zukanCardに長押し追加
+// zukanCardに長押し追加（関数式で定義してあるためそのまま上書き可）
 const _origZukanCard=zukanCard;
 zukanCard=function(td,silhouette,badge){
   const card=_origZukanCard(td,silhouette,badge);
   if(silhouette)return card;
   let lp=null;
-  const startLP=e=>{
-    lp=setTimeout(()=>{
-      lp=null;
-      const cid=canonicalTileId(td);
-      showVariantModal(cid,td);},500);};
+  const startLP=()=>{lp=setTimeout(()=>{lp=null;showVariantModal(td);},500);};
   const cancelLP=()=>{if(lp){clearTimeout(lp);lp=null;}};
   card.addEventListener('mousedown',startLP);
   card.addEventListener('touchstart',startLP,{passive:true});
@@ -1693,14 +1709,11 @@ function tutAdvance(){
 function _tutTileClick(){TUTO.step++;tutAdvance();}
 function startTutorial(){
   TUTO.step=0;TUTO.active=true;
-  const el=document.getElementById('tutorial');
-  el.classList.add('active');
-  el.style.pointerEvents='auto';
+  document.getElementById('tutorial').classList.add('active');
   tutAdvance();}
 function endTutorial(){
   TUTO.active=false;
   document.getElementById('tutorial').classList.remove('active');
-  document.getElementById('tutorial').style.pointerEvents='none';
   localStorage.setItem('truchet-tutorial-done','1');}
 
 document.getElementById('tut-skip').addEventListener('click',endTutorial);
