@@ -114,19 +114,23 @@
   /* チュートリアル */
   #tutorial{position:fixed;inset:0;z-index:500;pointer-events:none;display:none;}
   #tutorial.active{display:block;}
-  #tutorial .tut-dim{position:absolute;inset:0;background:rgba(14,12,20,.75);}
-  #tutorial .tut-bubble{position:absolute;background:var(--panel);border:2px solid var(--line);
-    border-radius:16px;padding:14px 16px;font-size:14px;font-weight:700;line-height:1.5;
-    max-width:260px;box-shadow:0 8px 30px #000a;pointer-events:auto;}
-  #tutorial .tut-bubble::after{content:'';position:absolute;bottom:-10px;left:50%;
-    transform:translateX(-50%);border:10px solid transparent;border-top-color:var(--line);
-    border-bottom:none;}
-  #tutorial .tut-skip{position:absolute;top:16px;right:16px;background:var(--grid);
-    border:none;color:var(--ink);border-radius:8px;padding:6px 14px;font-family:inherit;
-    font-size:12px;font-weight:700;cursor:pointer;pointer-events:auto;}
-  #tutorial .tut-next{background:var(--line);color:#14121a;border:none;border-radius:8px;
-    padding:6px 14px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;
-    margin-top:8px;display:block;}
+  #tutorial .tut-spot{position:absolute;border-radius:14px;pointer-events:none;
+    box-shadow:0 0 0 9999px rgba(14,12,20,.82);transition:left .25s,top .25s,width .25s,height .25s;}
+  #tutorial .tut-bubble{position:absolute;background:var(--panel);border:2px solid var(--accent);
+    border-radius:18px;padding:16px 18px;font-size:14px;line-height:1.6;
+    max-width:288px;box-shadow:0 10px 36px #000c;pointer-events:auto;transition:top .25s,left .25s;}
+  #tutorial .tut-step{font-size:10px;font-weight:700;color:var(--line);letter-spacing:.08em;
+    text-transform:uppercase;margin-bottom:4px;}
+  #tutorial .tut-title{font-size:17px;font-weight:900;color:var(--accent);margin-bottom:6px;}
+  #tutorial .tut-body{font-weight:600;color:var(--fg);}
+  #tutorial .tut-tip{font-size:12px;color:var(--line);margin-top:10px;line-height:1.55;
+    border-left:3px solid var(--gold);padding-left:9px;display:none;}
+  #tutorial .tut-skip{position:absolute;top:14px;right:14px;background:rgba(30,28,40,.7);
+    border:1px solid var(--grid);color:var(--line);border-radius:8px;padding:5px 12px;
+    font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;pointer-events:auto;}
+  #tutorial .tut-next{background:var(--accent);color:#0e0c14;border:none;border-radius:10px;
+    padding:10px 18px;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;
+    margin-top:12px;display:none;width:100%;}
 </style>
 </head>
 <body>
@@ -233,10 +237,13 @@
 
 <!-- チュートリアル -->
 <div id="tutorial">
-  <div class="tut-dim"></div>
+  <div class="tut-spot" id="tut-spot"></div>
   <button class="tut-skip" id="tut-skip">スキップ</button>
   <div class="tut-bubble" id="tut-bubble">
-    <span id="tut-text"></span>
+    <div class="tut-step" id="tut-step"></div>
+    <div class="tut-title" id="tut-title"></div>
+    <div class="tut-body" id="tut-text"></div>
+    <div class="tut-tip" id="tut-tip"></div>
     <button class="tut-next" id="tut-next">次へ →</button>
   </div>
 </div>
@@ -391,7 +398,7 @@ function drawDesign(){
     dx.beginPath();dx.arc(s.x,s.y,rad,0,7);dx.fillStyle=col;dx.fill();
     if(drag.from===p.id&&drag.mode==='slide'){dx.strokeStyle='#fff';dx.lineWidth=3;dx.stroke();}
     else if(!conn){dx.strokeStyle=getCSS('--accent');dx.lineWidth=2;dx.stroke();}});
-  updateStatus();}
+  updateStatus();tutCheck();}
 function updateStatus(){const open=S.points.filter(p=>!connected(p.id)).length;
   const el=document.getElementById('status');
   if(!S.points.length){el.textContent='辺をタップ';el.className='badge warn';return;}
@@ -1670,62 +1677,139 @@ document.getElementById('customizer-close').addEventListener('click',()=>
 
 // ===== チュートリアル =====
 
-const TUTO={step:0,active:false};
+// ===== チュートリアル v2 — スポットライト方式 =====
+const TUTO={step:0,active:false,_onTileClick:null};
 const TUTO_STEPS=[
-  {screen:'design', text:'ようこそ！\n正方形のタイルに2本の道があります。\n「完成」ボタンを押してみましょう！',
-   target:()=>document.getElementById('done'),next:'btn'},
-  {screen:'tile', text:'タイルをタップすると回転します。\nいくつか回してみましょう！',
-   target:()=>document.getElementById('tcanvas'),waitTap:true},
-  {screen:'tile', text:'ランダムでも道がつながります！\n「▶ スタート」を押してみましょう！',
-   target:()=>document.getElementById('startgame'),next:'btn'},
-  {screen:'tile', text:'チュートリアル完了！\n図鑑にタイルが登録されます。\nいろんなタイルを作って遊んでね！',
-   target:null,next:'btn'}];
+  // 0: 辺をタップして点を作る
+  {screen:'design',stepLabel:'Step 1 / 5',title:'辺をタップしてみよう',
+   body:'タイルの四角い枠の上をタップすると点が生まれます',
+   tip:null,spot:'dcanvas',showNext:false,
+   waitFor:()=>S.points.length>0},
+  // 1: 点からドラッグして接続
+  {screen:'design',stepLabel:'Step 2 / 5',title:'点を道で繋ごう',
+   body:'黄色い点からドラッグして、別の辺の点に繋げよう',
+   tip:null,spot:'dcanvas',showNext:false,
+   waitFor:()=>S.conns.length>0},
+  // 2: 全部繋ぐ
+  {screen:'design',stepLabel:'Step 3 / 5',title:'全部の点を緑にしよう',
+   body:'残りの点も全て繋げよう。点が緑になったら接続完了！',
+   tip:null,spot:'dcanvas',showNext:false,
+   waitFor:()=>S.points.length>0&&S.points.every(p=>connected(p.id))},
+  // 3: 完成ボタン（waitDone）
+  {screen:'design',stepLabel:'Step 4 / 5',title:'完成させよう！',
+   body:'「完成」ボタンを押してタイルを敷き詰めよう',
+   tip:'💡 点の位置はどこでもOK — 隣に置くと必ず道が繋がる。これがトルチェタイルの仕組みです',
+   spot:'done',showNext:false,waitDone:true},
+  // 4: タイルを回転（tileスクリーン、waitTap）
+  {screen:'tile',stepLabel:'Step 5 / 5',title:'タイルを回してみよう！',
+   body:'タイルをタップすると回転します。いくつか回してみて',
+   tip:null,spot:'tcanvas',showNext:false,waitTap:true},
+  // 5: 「繋がってる！」Tips
+  {screen:'tile',stepLabel:'',title:'どう回しても繋がる！',
+   body:'回転させても道は必ず隣のタイルと繋がります',
+   tip:'💡 ランダムに並べても、どれだけ回しても道は繋がる — これがトルチェタイルの面白さです！',
+   spot:'tcanvas',showNext:true},
+  // 6: 図鑑
+  {screen:'tile',stepLabel:'',title:'図鑑に登録されました！',
+   body:'並べた時点で作ったタイルが自動的に図鑑に記録されます',
+   tip:'📚 いろんな形のタイルを作ってコレクションしよう。ゲームはオプション — 並べるだけで楽しめます！',
+   spot:null,showNext:true,isLast:true},
+];
 
-function tutPositionBubble(target){
+function _tutPlaceElements(spotElId){
+  const spot=document.getElementById('tut-spot');
   const bubble=document.getElementById('tut-bubble');
-  if(!target){bubble.style.top='50%';bubble.style.left='50%';bubble.style.transform='translate(-50%,-50%)';
-    bubble.style.setProperty('--tail','none');return;}
-  const r=target.getBoundingClientRect();
-  const bh=bubble.offsetHeight||120,bw=bubble.offsetWidth||260;
-  let top=r.top-bh-20,left=r.left+(r.width-bw)/2;
-  if(top<10){top=r.bottom+20;}
-  left=Math.max(8,Math.min(left,window.innerWidth-bw-8));
-  bubble.style.top=top+'px';bubble.style.left=left+'px';bubble.style.transform='';}
+  const vw=window.innerWidth,vh=window.innerHeight;
+  if(!spotElId){
+    // center the bubble, hide spotlight
+    spot.style.cssText='position:absolute;left:50%;top:50%;width:0;height:0;border-radius:0;box-shadow:0 0 0 9999px rgba(14,12,20,.82);';
+    bubble.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);';
+    return;}
+  const el=document.getElementById(spotElId);
+  if(!el){_tutPlaceElements(null);return;}
+  const r=el.getBoundingClientRect();
+  const pad=spotElId==='done'?12:10;
+  // spotlight
+  spot.style.cssText=`position:absolute;left:${r.left-pad}px;top:${r.top-pad}px;width:${r.width+pad*2}px;height:${r.height+pad*2}px;border-radius:14px;box-shadow:0 0 0 9999px rgba(14,12,20,.82);`;
+  // bubble: prefer below spotlight, else above
+  const bw=Math.min(288,vw-24),bh=bubble.offsetHeight||170;
+  let bTop=r.bottom+pad+16;
+  if(bTop+bh>vh-12)bTop=r.top-pad-bh-16;
+  if(bTop<12)bTop=12;
+  let bLeft=r.left+(r.width-bw)/2;
+  bLeft=Math.max(12,Math.min(bLeft,vw-bw-12));
+  bubble.style.cssText=`position:absolute;top:${bTop}px;left:${bLeft}px;width:${bw}px;transform:'';`;}
 
 function tutAdvance(){
   const step=TUTO_STEPS[TUTO.step];
   if(!step){endTutorial();return;}
-  if(step.screen&&document.getElementById(step.screen)&&
-     !document.getElementById(step.screen).classList.contains('active')){
-    switchScreen(step.screen);}
-  document.getElementById('tut-text').textContent=step.text;
-  const target=step.target?step.target():null;
-  document.getElementById('tut-next').style.display=step.next==='btn'?'block':'none';
-  setTimeout(()=>tutPositionBubble(target),50);
+  // switch screen if needed
+  const scEl=step.screen&&document.getElementById(step.screen);
+  if(scEl&&!scEl.classList.contains('active'))switchScreen(step.screen);
+  // fill bubble
+  document.getElementById('tut-step').textContent=step.stepLabel||'';
+  document.getElementById('tut-title').textContent=step.title||'';
+  document.getElementById('tut-text').textContent=step.body||'';
+  const tipEl=document.getElementById('tut-tip');
+  if(step.tip){tipEl.textContent=step.tip;tipEl.style.display='block';}
+  else{tipEl.style.display='none';}
+  document.getElementById('tut-next').style.display=step.showNext?'block':'none';
+  // position after brief delay (canvas may still be rendering)
+  setTimeout(()=>_tutPlaceElements(step.spot),80);
+  // attach one-shot tap listener for tile screen rotation step
+  if(TUTO._onTileClick){document.getElementById('tcanvas').removeEventListener('click',TUTO._onTileClick);TUTO._onTileClick=null;}
   if(step.waitTap){
-    TUTO._waitTap=true;
-    document.getElementById('tcanvas').addEventListener('click',_tutTileClick,{once:true});}
-  else{TUTO._waitTap=false;}}
-function _tutTileClick(){TUTO.step++;tutAdvance();}
+    TUTO._onTileClick=()=>{TUTO.step++;tutAdvance();};
+    document.getElementById('tcanvas').addEventListener('click',TUTO._onTileClick,{once:true});}}
+
+// called from drawDesign to auto-advance on condition steps
+function tutCheck(){
+  if(!TUTO.active)return;
+  const step=TUTO_STEPS[TUTO.step];
+  if(step&&step.waitFor&&step.waitFor()){TUTO.step++;tutAdvance();}}
+
 function startTutorial(){
+  // clear design canvas and start fresh
+  snap();S.points=[];S.conns=[];S.nextId=1;history=[];
+  switchScreen('design');
   TUTO.step=0;TUTO.active=true;
   document.getElementById('tutorial').classList.add('active');
   tutAdvance();}
+
 function endTutorial(){
   TUTO.active=false;
+  if(TUTO._onTileClick){document.getElementById('tcanvas').removeEventListener('click',TUTO._onTileClick);TUTO._onTileClick=null;}
   document.getElementById('tutorial').classList.remove('active');
   localStorage.setItem('truchet-tutorial-done','1');}
 
 document.getElementById('tut-skip').addEventListener('click',endTutorial);
-document.getElementById('tut-next').addEventListener('click',()=>{TUTO.step++;tutAdvance();});
+document.getElementById('tut-next').addEventListener('click',()=>{
+  const step=TUTO_STEPS[TUTO.step];
+  if(step&&step.isLast){endTutorial();return;}
+  TUTO.step++;tutAdvance();});
+
+// hook: done button success → advance tutorial to tile step
+document.getElementById('done').addEventListener('click',()=>{
+  if(!TUTO.active)return;
+  const open=S.points.filter(p=>!connected(p.id)).length;
+  if(open>0||!S.points.length)return;
+  const step=TUTO_STEPS[TUTO.step];
+  if(step&&step.waitDone){TUTO.step++;setTimeout(()=>tutAdvance(),520);}});
+
 document.getElementById('tutorial-restart-btn').addEventListener('click',()=>{
   document.getElementById('settingspop').style.display='none';
   localStorage.removeItem('truchet-tutorial-done');
   startTutorial();});
 
+// reposition spotlight on resize
+window.addEventListener('resize',()=>{
+  if(!TUTO.active)return;
+  const step=TUTO_STEPS[TUTO.step];
+  if(step)setTimeout(()=>_tutPlaceElements(step.spot),80);});
+
 // 初回ロード時チュートリアル
 if(!localStorage.getItem('truchet-tutorial-done')){
-  setTimeout(startTutorial,800);}
+  setTimeout(startTutorial,900);}
 
 // ボタンハンドラ
 document.getElementById('startgame').addEventListener('click',startGame);
