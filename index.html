@@ -398,7 +398,7 @@ function drawDesign(){
     dx.beginPath();dx.arc(s.x,s.y,rad,0,7);dx.fillStyle=col;dx.fill();
     if(drag.from===p.id&&drag.mode==='slide'){dx.strokeStyle='#fff';dx.lineWidth=3;dx.stroke();}
     else if(!conn){dx.strokeStyle=getCSS('--accent');dx.lineWidth=2;dx.stroke();}});
-  updateStatus();tutCheck();}
+  updateStatus();if(TUTO.active)tutCheck();}
 function updateStatus(){const open=S.points.filter(p=>!connected(p.id)).length;
   const el=document.getElementById('status');
   if(!S.points.length){el.textContent='辺をタップ';el.className='badge warn';return;}
@@ -1738,7 +1738,7 @@ function _tutPlaceElements(spotElId){
   if(bTop<12)bTop=12;
   let bLeft=r.left+(r.width-bw)/2;
   bLeft=Math.max(12,Math.min(bLeft,vw-bw-12));
-  bubble.style.cssText=`position:absolute;top:${bTop}px;left:${bLeft}px;width:${bw}px;transform:'';`;}
+  bubble.style.cssText=`position:absolute;top:${bTop}px;left:${bLeft}px;width:${bw}px;transform:none;`;}
 
 function tutAdvance(){
   const step=TUTO_STEPS[TUTO.step];
@@ -1780,7 +1780,9 @@ function endTutorial(){
   TUTO.active=false;
   if(TUTO._onTileClick){document.getElementById('tcanvas').removeEventListener('click',TUTO._onTileClick);TUTO._onTileClick=null;}
   document.getElementById('tutorial').classList.remove('active');
-  localStorage.setItem('truchet-tutorial-done','1');}
+  localStorage.setItem('truchet-tutorial-done','1');
+  // スキップ等でキャンバスが空のままになった場合はデフォルトタイルを復元
+  if(S.points.length===0){seed();fitDesign();}}
 
 document.getElementById('tut-skip').addEventListener('click',endTutorial);
 document.getElementById('tut-next').addEventListener('click',()=>{
@@ -1807,8 +1809,8 @@ window.addEventListener('resize',()=>{
   const step=TUTO_STEPS[TUTO.step];
   if(step)setTimeout(()=>_tutPlaceElements(step.spot),80);});
 
-// 初回ロード時チュートリアル
-if(!localStorage.getItem('truchet-tutorial-done')){
+// 初回ロード時チュートリアル（既存の作業がある場合は起動しない）
+if(!localStorage.getItem('truchet-tutorial-done')&&S.points.length===0){
   setTimeout(startTutorial,900);}
 
 // ボタンハンドラ
