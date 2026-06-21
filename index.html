@@ -498,9 +498,12 @@ function bezierArcLen(conn){
     len+=Math.hypot(pt.x-prev.x,pt.y-prev.y);prev=pt;}
   return len;}
 
-function buildSnapshot(){if(GAME&&GAME.state!=='idle')stopGame();if(GAME)GAME.startIdx=0;TILE={n:S.n,width:(+document.getElementById('width').value)/(DV.R),road:COLOR.road,bg:COLOR.bg,
-  conns:S.conns.map(c=>{const a=find(c[0]),b=find(c[1]);
-    const w=c[2]?{ux:c[2].ux/DV.R, uy:c[2].uy/DV.R}:null;
+function buildSnapshot(){
+  if(GAME&&GAME.state!=='idle')stopGame();if(GAME)GAME.startIdx=0;
+  const validConns=S.conns.filter(c=>find(c[0])&&find(c[1]));
+  TILE={n:S.n,width:(+document.getElementById('width').value)/(DV.R||1),road:COLOR.road,bg:COLOR.bg,
+  conns:validConns.map(c=>{const a=find(c[0]),b=find(c[1]);
+    const w=c[2]?{ux:c[2].ux/(DV.R||1), uy:c[2].uy/(DV.R||1)}:null;
     return{a:{edge:a.edge,t:a.t},b:{edge:b.edge,t:b.t},warp:w};})};
   TILE.conns.forEach((c,i)=>{
     c.len=bezierArcLen(c);
@@ -584,7 +587,9 @@ function cellAngle(g){
   if(g.frozenAngle!==undefined)return g.frozenAngle;
   const base=g.rot*stepAngle();
   if(g.target!==null){return base+stepAngle()*g.anim;}return base;}
-function drawTiles(){tx.clearRect(0,0,tc.width,tc.height);
+function drawTiles(){
+  if(!tc.width||!tc.height){fitTile();return;}
+  tx.clearRect(0,0,tc.width,tc.height);
   if(!TILE){tx.fillStyle=getCSS('--line');tx.font="16px 'Zen Maru Gothic'";tx.textAlign='center';
     tx.fillText('まずデザイン画面でタイルを完成させてね',tc.width/2,tc.height/2);return;}
   const n=TL.n;
@@ -645,7 +650,7 @@ function switchScreen(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.screen===name));
   document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===name));
   if(name==='design'){if(GAME.state!=='idle')stopGame();fitDesign();}
-  if(name==='tile'){if(!TILE)buildSnapshot();fitTile();if(!grid.length)makeGrid();drawTiles();}
+  if(name==='tile'){try{if(!TILE)buildSnapshot();}catch(e){TILE=null;}fitTile();if(!grid.length)makeGrid();drawTiles();}
   if(name==='zukan')renderZukan();}
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   if(t.dataset.screen!=='tile'&&GAME.state!=='idle'){
@@ -1782,7 +1787,9 @@ function endTutorial(){
   document.getElementById('tutorial').classList.remove('active');
   localStorage.setItem('truchet-tutorial-done','1');
   // スキップ等でキャンバスが空のままになった場合はデフォルトタイルを復元
-  if(S.points.length===0){seed();fitDesign();}}
+  if(S.points.length===0){seed();fitDesign();}
+  TILE=null; // 次回タイルタブ表示時にクリーンに再構築させる
+}
 
 document.getElementById('tut-skip').addEventListener('click',endTutorial);
 document.getElementById('tut-next').addEventListener('click',()=>{
