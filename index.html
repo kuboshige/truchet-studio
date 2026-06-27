@@ -253,6 +253,7 @@ const PALETTE=['#cdbcff','#ff5c8a','#ffce5c','#5cffd0','#5ca8ff','#ff8a5c',
                '#ffffff','#b0b0c0','#7a6cff','#46c46b','#e74c3c','#14121a',
                '#2a2436','#1a1726','#3a2f55','#0e0c14','#f5e6c8','#2b3a2b'];
 let COLOR={road:'#7a5cff', bg:'#e8e4f0'};
+var TUTO; // チュートリアル状態（drawDesignがロード時に参照するため先に巻き上げ宣言）
 function polyVerts(n){const v=[];const off=(n===4)?Math.PI/4:(n===3?-Math.PI/2:Math.PI/6);
   for(let i=0;i<n;i++){const a=off+i*2*Math.PI/n;v.push({x:Math.cos(a),y:Math.sin(a)});}return v;}
 function edgePt(verts,edge,t){const a=verts[edge],b=verts[(edge+1)%verts.length];
@@ -398,7 +399,7 @@ function drawDesign(){
     dx.beginPath();dx.arc(s.x,s.y,rad,0,7);dx.fillStyle=col;dx.fill();
     if(drag.from===p.id&&drag.mode==='slide'){dx.strokeStyle='#fff';dx.lineWidth=3;dx.stroke();}
     else if(!conn){dx.strokeStyle=getCSS('--accent');dx.lineWidth=2;dx.stroke();}});
-  updateStatus();if(TUTO.active)tutCheck();}
+  updateStatus();if(TUTO&&TUTO.active)tutCheck();}
 function updateStatus(){const open=S.points.filter(p=>!connected(p.id)).length;
   const el=document.getElementById('status');
   if(!S.points.length){el.textContent='辺をタップ';el.className='badge warn';return;}
@@ -1683,7 +1684,7 @@ document.getElementById('customizer-close').addEventListener('click',()=>
 // ===== チュートリアル =====
 
 // ===== チュートリアル v2 — スポットライト方式 =====
-const TUTO={step:0,active:false,_onTileClick:null};
+TUTO={step:0,active:false,_onTileClick:null};
 const TUTO_STEPS=[
   // 0: 辺をタップして点を作る
   {screen:'design',stepLabel:'Step 1 / 5',title:'辺をタップしてみよう',
