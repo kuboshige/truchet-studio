@@ -1,5 +1,10 @@
 # 「並べるだけで、必ずつながる」——トルチェタイルで遊ぶパズルアプリを作った話
 
+> 🎮 **今すぐ遊ぶ**: https://kuboshige.github.io/truchet-studio/
+> 💻 **ソースコード（GitHub）**: https://github.com/kuboshige/truchet-studio
+>
+> スマホのブラウザでそのまま動きます。インストール不要。
+
 ## タイルを置くと、道がつながる。どう回しても。
 
 正方形のタイルに、2本の曲線を描く。それだけのタイルを、ランダムに何枚も並べてみる。すると——どう並べても、どんなに回転させても、道は**必ず**隣のタイルとつながる。
@@ -72,3 +77,10 @@
 ---
 
 *Truchet Tile Studio は、シンプルな1枚のWebアプリとして公開しています。スマホのブラウザで、ぜひ「並べるだけでつながる」感覚を体験してみてください。*
+
+---
+
+### リンク
+
+- 🎮 **今すぐ遊ぶ**: https://kuboshige.github.io/truchet-studio/
+- 💻 **ソースコード（GitHub）**: https://github.com/kuboshige/truchet-studio
